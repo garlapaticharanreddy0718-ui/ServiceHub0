@@ -1,0 +1,412 @@
+// Prisma schema file for ServiceHub
+// Phase 2: Core Database Architecture
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==================================================
+// ENUMS
+// ==================================================
+
+enum BusinessRole {
+  OWNER
+  ADMIN
+  STAFF
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  REFUNDED
+}
+
+// ==================================================
+// MODELS
+// ==================================================
+
+/// Platform account user
+model User {
+  id           String           @id @default(uuid())
+  name         String
+  email        String           @unique
+  passwordHash       String
+  mustChangePassword Boolean          @default(false)
+  phone              String?
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  // Relationships
+  businessMembers BusinessMember[]
+  customers       Customer[]
+  customerNotes   CustomerNote[]
+  bookingStatusHistory BookingStatusHistory[]
+  refreshTokens   RefreshToken[]
+
+  @@map("users")
+}
+
+/// Tenant business entity
+model Business {
+  id          String   @id @default(uuid())
+  name        String
+  description String?  @db.Text
+  category    String?
+  phone       String?
+  address     String?
+  city        String?
+  latitude    Float?
+  longitude   Float?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relationships
+  members           BusinessMember[]
+  services          Service[]
+  serviceCategories ServiceCategory[]
+  customers         Customer[]
+  bookings          Booking[]
+  reviews           Review[]
+
+  @@map("businesses")
+}
+
+/// Membership linking Users to Businesses (Multi-tenancy & RBAC)
+model BusinessMember {
+  id         String       @id @default(uuid())
+  userId     String
+  businessId String
+  role       BusinessRole @default(STAFF)
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  // Relationships
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  business     Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  staffProfile Staff?
+
+  @@unique([userId, businessId])
+  @@index([businessId])
+  @@index([userId])
+  @@map("business_members")
+}
+
+/// Services offered by a Business
+model Service {
+  id              String           @id @default(uuid())
+  businessId      String
+  categoryId      String?
+  name            String
+  description     String?          @db.Text
+  price           Decimal          @db.Decimal(10, 2)
+  durationMinutes Int
+  isActive        Boolean          @default(true)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  // Relationships
+  business      Business         @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  category      ServiceCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  bookings      Booking[]
+  staffServices StaffService[]
+
+  @@index([businessId])
+  @@index([businessId, isActive])
+  @@index([categoryId])
+  @@map("services")
+}
+
+/// Staff profile associated with a BusinessMember
+model Staff {
+  id               String           @id @default(uuid())
+  businessMemberId String           @unique
+  displayName      String
+  bio              String?          @db.Text
+  isActive         Boolean          @default(true)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  // Relationships
+  businessMember BusinessMember   @relation(fields: [businessMemberId], references: [id], onDelete: Cascade)
+  bookings       Booking[]
+  staffServices  StaffService[]
+  schedules      StaffSchedule[]
+  timeOffs       StaffTimeOff[]
+  breaks         StaffBreak[]
+
+  @@index([businessMemberId])
+  @@map("staff")
+}
+
+/// Customer records managed by a Business (CRM)
+model Customer {
+  id          String         @id @default(uuid())
+  businessId  String
+  userId      String?
+  name        String
+  email       String?
+  phone       String?
+  address     String?
+  dateOfBirth DateTime?
+  isActive    Boolean        @default(true)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  // Relationships
+  business Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  user     User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+  notes    CustomerNote[]
+  bookings Booking[]
+  reviews  Review[]
+
+  @@unique([businessId, email])
+  @@index([businessId])
+  @@index([businessId, isActive])
+  @@index([businessId, name])
+  @@index([businessId, phone])
+  @@index([email])
+  @@index([userId])
+  @@map("customers")
+}
+
+/// Internal business notes recorded for a Customer
+model CustomerNote {
+  id           String   @id @default(uuid())
+  customerId   String
+  authorUserId String
+  content      String   @db.Text
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relationships
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  author   User     @relation(fields: [authorUserId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([authorUserId])
+  @@map("customer_notes")
+}
+
+/// Central Booking entity
+model Booking {
+  id          String        @id @default(uuid())
+  businessId  String
+  customerId  String
+  serviceId   String
+  staffId     String?
+  startTime   DateTime
+  endTime     DateTime
+  status      BookingStatus @default(PENDING)
+  totalAmount Decimal       @db.Decimal(10, 2)
+  notes       String?       @db.Text
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  // Relationships
+  business      Business               @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  customer      Customer               @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  service       Service                @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+  staff         Staff?                 @relation(fields: [staffId], references: [id], onDelete: SetNull)
+  statusHistory BookingStatusHistory[]
+  payments      Payment[]
+  review        Review?
+
+  @@index([businessId])
+  @@index([customerId])
+  @@index([staffId])
+  @@index([startTime])
+  @@index([status])
+  @@index([businessId, startTime])
+  @@index([businessId, status])
+  @@index([businessId, staffId])
+  @@index([businessId, customerId])
+  @@index([businessId, serviceId])
+  @@map("bookings")
+}
+
+/// Audit log history of status changes for a Booking
+model BookingStatusHistory {
+  id              String        @id @default(uuid())
+  bookingId       String
+  fromStatus      BookingStatus?
+  toStatus        BookingStatus
+  changedByUserId String
+  reason          String?       @db.Text
+  createdAt       DateTime      @default(now())
+
+  // Relationships
+  booking       Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  changedByUser User    @relation(fields: [changedByUserId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId])
+  @@index([changedByUserId])
+  @@index([createdAt])
+  @@map("booking_status_history")
+}
+
+/// Payment transaction records associated with a Booking
+model Payment {
+  id                String        @id @default(uuid())
+  bookingId         String
+  amount            Decimal       @db.Decimal(10, 2)
+  status            PaymentStatus @default(PENDING)
+  provider          String?
+  providerOrderId   String?       @unique
+  providerPaymentId String?       @unique
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  // Relationships
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId])
+  @@index([providerOrderId])
+  @@index([providerPaymentId])
+  @@map("payments")
+}
+
+/// Review and rating for a completed Booking
+model Review {
+  id         String   @id @default(uuid())
+  businessId String
+  customerId String
+  bookingId  String   @unique
+  rating     Int
+  comment    String?  @db.Text
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  // Relationships
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  booking  Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([businessId])
+  @@index([customerId])
+  @@map("reviews")
+}
+
+/// Hashed Refresh Tokens for User Authentication Sessions
+model RefreshToken {
+  id        String    @id @default(uuid())
+  userId    String
+  tokenHash String
+  expiresAt DateTime
+  createdAt DateTime  @default(now())
+  revokedAt DateTime?
+
+  // Relationships
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tokenHash])
+  @@map("refresh_tokens")
+}
+
+/// Categories for grouping services within a Business
+model ServiceCategory {
+  id          String    @id @default(uuid())
+  businessId  String
+  name        String
+  description String?   @db.Text
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Relationships
+  business Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  services Service[]
+
+  @@unique([businessId, name])
+  @@index([businessId])
+  @@map("service_categories")
+}
+
+/// Many-to-many join table for Staff and Service capabilities
+model StaffService {
+  id        String   @id @default(uuid())
+  staffId   String
+  serviceId String
+  createdAt DateTime @default(now())
+
+  // Relationships
+  staff   Staff   @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  service Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@unique([staffId, serviceId])
+  @@index([staffId])
+  @@index([serviceId])
+  @@map("staff_services")
+}
+
+/// Weekly recurring availability schedule for a Staff member
+model StaffSchedule {
+  id          String   @id @default(uuid())
+  staffId     String
+  dayOfWeek   Int      // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+  startTime   String   // e.g. "09:00"
+  endTime     String   // e.g. "17:00"
+  isAvailable Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relationships
+  staff Staff @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@unique([staffId, dayOfWeek])
+  @@index([staffId])
+  @@map("staff_schedules")
+}
+
+/// Vacation and time-off records for a Staff member
+model StaffTimeOff {
+  id            String   @id @default(uuid())
+  staffId       String
+  startDateTime DateTime
+  endDateTime   DateTime
+  reason        String?  @db.Text
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relationships
+  staff Staff @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@index([staffId])
+  @@index([staffId, startDateTime])
+  @@map("staff_time_off")
+}
+
+/// Recurring weekly breaks for a Staff member
+model StaffBreak {
+  id        String   @id @default(uuid())
+  staffId   String
+  dayOfWeek Int      // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+  startTime String   // e.g. "13:00"
+  endTime   String   // e.g. "14:00"
+  label     String?  // e.g. "Lunch", "Tea Break"
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relationships
+  staff Staff @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@unique([staffId, dayOfWeek, startTime, endTime])
+  @@index([staffId])
+  @@index([staffId, dayOfWeek])
+  @@map("staff_breaks")
+}
