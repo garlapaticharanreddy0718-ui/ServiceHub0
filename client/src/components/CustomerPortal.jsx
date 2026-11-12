@@ -38,6 +38,7 @@ import {
 import Badge from './ui/Badge';
 import Button from './ui/Button';
 import CustomerBookingPage from './CustomerBookingPage';
+import { formatLocalDateISO, toLocalISOStringWithOffset } from '../utils/dateUtils';
 
 const CATEGORY_ITEMS = [
   { name: 'All', icon: LayoutGrid },
@@ -594,76 +595,87 @@ export default function CustomerPortal({ currentUser, onLogout, activeTabProp = 
     setRescheduleSlots([]);
     setRescheduleSelectedTime('');
     try {
+      const now = new Date();
+      const tzOffset = now.getTimezoneOffset();
+      const excludeParam = excludeBookingId ? `&excludeBookingId=${excludeBookingId}` : '';
       const res = await apiRequest(
-        `/businesses/${bizId}/availability?staffId=${staffId}&serviceId=${serviceId}&date=${dateStr}`
+        `/businesses/${bizId}/availability?staffId=${staffId}&serviceId=${serviceId}&date=${dateStr}&tzOffset=${tzOffset}${excludeParam}`
       );
       if (res.ok) {
         const resData = await res.json();
-        const { schedule, timeOff, breaks, bookings, isPastDate } = resData.data || {};
+        const { schedule, timeOff, breaks, bookings, isPastDate, slots: serverSlots } = resData.data || {};
 
         if (isPastDate || !schedule || !schedule.isAvailable) {
           setRescheduleSlots([]);
           return;
         }
 
-        const now = new Date();
-        const todayISO = now.toISOString().split('T')[0];
-
-        const [startH, startM] = schedule.startTime.split(':').map(Number);
-        const [endH, endM] = schedule.endTime.split(':').map(Number);
-
+        const todayISO = formatLocalDateISO(now);
         const [yStr, mStr, dStr] = dateStr.split('-').map(Number);
-        const dayStart = new Date(yStr, mStr - 1, dStr, startH, startM, 0, 0);
-        const dayEnd = new Date(yStr, mStr - 1, dStr, endH, endM, 0, 0);
-
-        const slotDurationMs = (durationMinutes || 30) * 60 * 1000;
         const validSlots = [];
 
-        let current = new Date(dayStart);
-
-        while (current.getTime() + slotDurationMs <= dayEnd.getTime()) {
-          const slotEnd = new Date(current.getTime() + slotDurationMs);
-
-          // 1. PAST TIME CHECK:
-          if (dateStr <= todayISO && current.getTime() <= now.getTime()) {
-            current = new Date(current.getTime() + 30 * 60 * 1000);
-            continue;
-          }
-
-          // 2. TIME OFF CONFLICT CHECK
-          const isTimeOffConflict = (timeOff || []).some((to) => {
-            const toStart = new Date(to.startDateTime);
-            const toEnd = new Date(to.endDateTime);
-            return current < toEnd && slotEnd > toStart;
+        if (Array.isArray(serverSlots)) {
+          serverSlots.forEach((slot) => {
+            const [hh, mm] = slot.value.split(':').map(Number);
+            const slotDate = new Date(yStr, mStr - 1, dStr, hh, mm, 0, 0);
+            const displayTime = slotDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
+            validSlots.push({ startTime: slot.value, displayTime, isoStart: slot.isoStart });
           });
+        } else {
+          const [startH, startM] = schedule.startTime.split(':').map(Number);
+          const [endH, endM] = schedule.endTime.split(':').map(Number);
 
-          // 3. BREAK CONFLICT CHECK
-          const isBreakConflict = (breaks || []).some((br) => {
-            const [bStartH, bStartM] = br.startTime.split(':').map(Number);
-            const [bEndH, bEndM] = br.endTime.split(':').map(Number);
-            const brStart = new Date(yStr, mStr - 1, dStr, bStartH, bStartM, 0, 0);
-            const brEnd = new Date(yStr, mStr - 1, dStr, bEndH, bEndM, 0, 0);
-            return current < brEnd && slotEnd > brStart;
-          });
+          const dayStart = new Date(yStr, mStr - 1, dStr, startH, startM, 0, 0);
+          const dayEnd = new Date(yStr, mStr - 1, dStr, endH, endM, 0, 0);
 
-          // 4. BOOKING CONFLICT CHECK (The existing appointment being rescheduled MUST NOT block itself!)
-          const isBookingConflict = (bookings || []).some((b) => {
-            if (excludeBookingId && b.id === excludeBookingId) {
-              return false;
+          const slotDurationMs = (durationMinutes || 30) * 60 * 1000;
+
+          let current = new Date(dayStart);
+
+          while (current.getTime() + slotDurationMs <= dayEnd.getTime()) {
+            const slotEnd = new Date(current.getTime() + slotDurationMs);
+
+            // 1. PAST TIME CHECK:
+            if (dateStr <= todayISO && current.getTime() <= now.getTime()) {
+              current = new Date(current.getTime() + 30 * 60 * 1000);
+              continue;
             }
-            const bStart = new Date(b.startTime);
-            const bEnd = new Date(b.endTime);
-            return current < bEnd && slotEnd > bStart;
-          });
 
-          if (!isTimeOffConflict && !isBreakConflict && !isBookingConflict) {
-            const hour = current.getHours();
-            const displayTime = current.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
-            const rawHHMM = `${String(hour).padStart(2, '0')}:${String(current.getMinutes()).padStart(2, '0')}`;
-            validSlots.push({ startTime: rawHHMM, displayTime, isoStart: current.toISOString() });
+            // 2. TIME OFF CONFLICT CHECK
+            const isTimeOffConflict = (timeOff || []).some((to) => {
+              const toStart = new Date(to.startDateTime);
+              const toEnd = new Date(to.endDateTime);
+              return current < toEnd && slotEnd > toStart;
+            });
+
+            // 3. BREAK CONFLICT CHECK
+            const isBreakConflict = (breaks || []).some((br) => {
+              const [bStartH, bStartM] = br.startTime.split(':').map(Number);
+              const [bEndH, bEndM] = br.endTime.split(':').map(Number);
+              const brStart = new Date(yStr, mStr - 1, dStr, bStartH, bStartM, 0, 0);
+              const brEnd = new Date(yStr, mStr - 1, dStr, bEndH, bEndM, 0, 0);
+              return current < brEnd && slotEnd > brStart;
+            });
+
+            // 4. BOOKING CONFLICT CHECK (The existing appointment being rescheduled MUST NOT block itself!)
+            const isBookingConflict = (bookings || []).some((b) => {
+              if (excludeBookingId && b.id === excludeBookingId) {
+                return false;
+              }
+              const bStart = new Date(b.startTime);
+              const bEnd = new Date(b.endTime);
+              return current < bEnd && slotEnd > bStart;
+            });
+
+            if (!isTimeOffConflict && !isBreakConflict && !isBookingConflict) {
+              const hour = current.getHours();
+              const displayTime = current.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
+              const rawHHMM = `${String(hour).padStart(2, '0')}:${String(current.getMinutes()).padStart(2, '0')}`;
+              validSlots.push({ startTime: rawHHMM, displayTime, isoStart: current.toISOString() });
+            }
+
+            current = new Date(current.getTime() + 30 * 60 * 1000);
           }
-
-          current = new Date(current.getTime() + 30 * 60 * 1000);
         }
 
         setRescheduleSlots(validSlots);
@@ -684,7 +696,7 @@ export default function CustomerPortal({ currentUser, onLogout, activeTabProp = 
 
     const tomorrow = new Date();
     tomorrow.setDate(tomorrow.getDate() + 1);
-    const tomorrowStr = tomorrow.toISOString().split('T')[0];
+    const tomorrowStr = formatLocalDateISO(tomorrow);
     setRescheduleDate(tomorrowStr);
 
     try {
@@ -719,7 +731,7 @@ export default function CustomerPortal({ currentUser, onLogout, activeTabProp = 
     setRescheduleLoading(true);
     setRescheduleError(null);
 
-    const newStartTimeStr = `${rescheduleDate}T${rescheduleSelectedTime}:00`;
+    const newStartTimeStr = toLocalISOStringWithOffset(rescheduleDate, rescheduleSelectedTime);
     try {
       const res = await apiRequest(
         `/businesses/${rescheduleBooking.businessId}/bookings/${rescheduleBooking.id}`,
@@ -728,6 +740,7 @@ export default function CustomerPortal({ currentUser, onLogout, activeTabProp = 
           body: JSON.stringify({
             staffId: rescheduleStaffId,
             startTime: newStartTimeStr,
+            timezoneOffset: new Date().getTimezoneOffset(),
           }),
         }
       );
@@ -2437,7 +2450,7 @@ export default function CustomerPortal({ currentUser, onLogout, activeTabProp = 
                 <label className="text-xs font-bold text-[#112C24] block">Select Date:</label>
                 <input
                   type="date"
-                  min={new Date().toISOString().split('T')[0]}
+                  min={formatLocalDateISO(new Date())}
                   value={rescheduleDate}
                   onChange={(e) => {
                     const newDate = e.target.value;

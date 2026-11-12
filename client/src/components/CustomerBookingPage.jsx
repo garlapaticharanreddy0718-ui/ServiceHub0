@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { apiRequest } from '../services/api';
 import {
   ArrowLeft,
@@ -20,6 +20,7 @@ import {
   MapPin
 } from 'lucide-react';
 import LoadingState from './ui/LoadingState';
+import { formatLocalDateISO, toLocalISOStringWithOffset } from '../utils/dateUtils';
 
 const SERVICE_PLACEHOLDER_IMAGES = {
   'Beauty & Salon': '/images/businesses/glow_style_beauty_studio.jpg',
@@ -38,7 +39,7 @@ export default function CustomerBookingPage({
 }) {
   const [staffList, setStaffList] = useState([]);
   const [selectedStaffId, setSelectedStaffId] = useState('');
-  const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [selectedDate, setSelectedDate] = useState(() => formatLocalDateISO(new Date()));
   const [selectedTimeSlot, setSelectedTimeSlot] = useState('');
   const [notes, setNotes] = useState('');
 
@@ -50,6 +51,7 @@ export default function CustomerBookingPage({
   const [bookingLoading, setBookingLoading] = useState(false);
   const [bookingError, setBookingError] = useState(null);
   const [confirmedBookingData, setConfirmedBookingData] = useState(null);
+  const availabilityReqIdRef = useRef(0);
 
   // 1. Fetch eligible staff for the service
   const loadEligibleStaff = useCallback(async () => {
@@ -90,13 +92,16 @@ export default function CustomerBookingPage({
   const fetchAvailability = async (bizId, staffId, serviceId, dateStr, durationMins) => {
     if (!bizId || !staffId || !serviceId || !dateStr) return;
 
+    const requestId = ++availabilityReqIdRef.current;
+
     setAvailabilityLoading(true);
     setAvailabilityError(null);
     setGroupedTimeSlots({ morning: [], afternoon: [], evening: [] });
     setSelectedTimeSlot('');
 
     const now = new Date();
-    const todayISO = now.toISOString().split('T')[0];
+    const todayISO = formatLocalDateISO(now);
+    const tzOffset = now.getTimezoneOffset();
 
     // Past date check
     if (dateStr < todayISO) {
@@ -107,15 +112,17 @@ export default function CustomerBookingPage({
 
     try {
       const response = await apiRequest(
-        `/businesses/${bizId}/availability?staffId=${staffId}&serviceId=${serviceId}&date=${dateStr}`
+        `/businesses/${bizId}/availability?staffId=${staffId}&serviceId=${serviceId}&date=${dateStr}&tzOffset=${tzOffset}`
       );
       const resData = await response.json();
+
+      if (requestId !== availabilityReqIdRef.current) return;
 
       if (!response.ok) {
         throw new Error(resData.message || 'Failed to fetch backend availability');
       }
 
-      const { schedule, timeOff, breaks, bookings, isPastDate } = resData.data;
+      const { schedule, timeOff, breaks, bookings, isPastDate, slots: serverSlots } = resData.data;
 
       if (isPastDate) {
         setAvailabilityError('Bookings are not available for past dates.');
@@ -127,71 +134,87 @@ export default function CustomerBookingPage({
         return;
       }
 
-      const [startH, startM] = schedule.startTime.split(':').map(Number);
-      const [endH, endM] = schedule.endTime.split(':').map(Number);
-
       const [yStr, mStr, dStr] = dateStr.split('-').map(Number);
-      const dayStart = new Date(yStr, mStr - 1, dStr, startH, startM, 0, 0);
-      const dayEnd = new Date(yStr, mStr - 1, dStr, endH, endM, 0, 0);
-
-      const slotDurationMs = (durationMins || 30) * 60 * 1000;
       const morning = [];
       const afternoon = [];
       const evening = [];
 
-      let current = new Date(dayStart);
+      if (Array.isArray(serverSlots)) {
+        serverSlots.forEach((slot) => {
+          const [hh, mm] = slot.value.split(':').map(Number);
+          const slotDate = new Date(yStr, mStr - 1, dStr, hh, mm, 0, 0);
+          const displayTime = slotDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
+          const slotObj = { display: displayTime, value: slot.value, isoStart: slot.isoStart };
 
-      while (current.getTime() + slotDurationMs <= dayEnd.getTime()) {
-        const slotEnd = new Date(current.getTime() + slotDurationMs);
-
-        // 1. PAST TIME SLOT CHECK:
-        // Skip slot if slot start time is in the past relative to actual current time (`now`)
-        if (dateStr <= todayISO && current.getTime() <= now.getTime()) {
-          current = new Date(current.getTime() + 30 * 60 * 1000);
-          continue;
-        }
-
-        // 2. TIME OFF CONFLICT CHECK
-        const isTimeOffConflict = (timeOff || []).some((to) => {
-          const toStart = new Date(to.startDateTime);
-          const toEnd = new Date(to.endDateTime);
-          return current < toEnd && slotEnd > toStart;
-        });
-
-        // 3. BREAK CONFLICT CHECK
-        const isBreakConflict = (breaks || []).some((br) => {
-          const [bStartH, bStartM] = br.startTime.split(':').map(Number);
-          const [bEndH, bEndM] = br.endTime.split(':').map(Number);
-          const brStart = new Date(yStr, mStr - 1, dStr, bStartH, bStartM, 0, 0);
-          const brEnd = new Date(yStr, mStr - 1, dStr, bEndH, bEndM, 0, 0);
-          return current < brEnd && slotEnd > brStart;
-        });
-
-        // 4. BOOKING CONFLICT CHECK (active bookings: PENDING, CONFIRMED, IN_PROGRESS)
-        const isBookingConflict = (bookings || []).some((b) => {
-          if (b.status && !['PENDING', 'CONFIRMED', 'IN_PROGRESS'].includes(b.status)) return false;
-          const bStart = new Date(b.startTime);
-          const bEnd = new Date(b.endTime);
-          return current < bEnd && slotEnd > bStart;
-        });
-
-        if (!isTimeOffConflict && !isBreakConflict && !isBookingConflict) {
-          const hour = current.getHours();
-          const displayTime = current.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
-          const rawHHMM = `${String(hour).padStart(2, '0')}:${String(current.getMinutes()).padStart(2, '0')}`;
-
-          const slotObj = { display: displayTime, value: rawHHMM, isoStart: current.toISOString() };
-
-          if (hour < 12) {
+          if (hh < 12) {
             morning.push(slotObj);
-          } else if (hour >= 12 && hour < 17) {
+          } else if (hh >= 12 && hh < 17) {
             afternoon.push(slotObj);
           } else {
             evening.push(slotObj);
           }
-        }
+        });
+      } else {
+        const [startH, startM] = schedule.startTime.split(':').map(Number);
+        const [endH, endM] = schedule.endTime.split(':').map(Number);
 
-        current = new Date(current.getTime() + 30 * 60 * 1000);
+        const dayStart = new Date(yStr, mStr - 1, dStr, startH, startM, 0, 0);
+        const dayEnd = new Date(yStr, mStr - 1, dStr, endH, endM, 0, 0);
+        const slotDurationMs = (durationMins || 30) * 60 * 1000;
+
+        let current = new Date(dayStart);
+
+        while (current.getTime() + slotDurationMs <= dayEnd.getTime()) {
+          const slotEnd = new Date(current.getTime() + slotDurationMs);
+
+          // 1. PAST TIME SLOT CHECK:
+          if (dateStr <= todayISO && current.getTime() <= now.getTime()) {
+            current = new Date(current.getTime() + 30 * 60 * 1000);
+            continue;
+          }
+
+          // 2. TIME OFF CONFLICT CHECK
+          const isTimeOffConflict = (timeOff || []).some((to) => {
+            const toStart = new Date(to.startDateTime);
+            const toEnd = new Date(to.endDateTime);
+            return current < toEnd && slotEnd > toStart;
+          });
+
+          // 3. BREAK CONFLICT CHECK
+          const isBreakConflict = (breaks || []).some((br) => {
+            const [bStartH, bStartM] = br.startTime.split(':').map(Number);
+            const [bEndH, bEndM] = br.endTime.split(':').map(Number);
+            const brStart = new Date(yStr, mStr - 1, dStr, bStartH, bStartM, 0, 0);
+            const brEnd = new Date(yStr, mStr - 1, dStr, bEndH, bEndM, 0, 0);
+            return current < brEnd && slotEnd > brStart;
+          });
+
+          // 4. BOOKING CONFLICT CHECK (active bookings: PENDING, CONFIRMED, IN_PROGRESS)
+          const isBookingConflict = (bookings || []).some((b) => {
+            if (b.status && !['PENDING', 'CONFIRMED', 'IN_PROGRESS'].includes(b.status)) return false;
+            const bStart = new Date(b.startTime);
+            const bEnd = new Date(b.endTime);
+            return current < bEnd && slotEnd > bStart;
+          });
+
+          if (!isTimeOffConflict && !isBreakConflict && !isBookingConflict) {
+            const hour = current.getHours();
+            const displayTime = current.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
+            const rawHHMM = `${String(hour).padStart(2, '0')}:${String(current.getMinutes()).padStart(2, '0')}`;
+
+            const slotObj = { display: displayTime, value: rawHHMM, isoStart: current.toISOString() };
+
+            if (hour < 12) {
+              morning.push(slotObj);
+            } else if (hour >= 12 && hour < 17) {
+              afternoon.push(slotObj);
+            } else {
+              evening.push(slotObj);
+            }
+          }
+
+          current = new Date(current.getTime() + 30 * 60 * 1000);
+        }
       }
 
       setGroupedTimeSlots({ morning, afternoon, evening });
@@ -207,14 +230,18 @@ export default function CustomerBookingPage({
         }
       }
     } catch (err) {
+      if (requestId !== availabilityReqIdRef.current) return;
       console.error('Availability calculation failed:', err);
       setAvailabilityError(err.message || 'Unable to load available time slots.');
     } finally {
-      setAvailabilityLoading(false);
+      if (requestId === availabilityReqIdRef.current) {
+        setAvailabilityLoading(false);
+      }
     }
   };
 
   const handleStaffSelect = (staffId) => {
+    setBookingError(null);
     setSelectedStaffId(staffId);
     if (business && service && staffId && selectedDate) {
       fetchAvailability(business.id, staffId, service.id, selectedDate, service.durationMinutes);
@@ -222,6 +249,7 @@ export default function CustomerBookingPage({
   };
 
   const handleDateChange = (newDateStr) => {
+    setBookingError(null);
     setSelectedDate(newDateStr);
     if (business && service && selectedStaffId && newDateStr) {
       fetchAvailability(business.id, selectedStaffId, service.id, newDateStr, service.durationMinutes);
@@ -254,7 +282,7 @@ export default function CustomerBookingPage({
         }
       } catch (e) {}
 
-      const startTimeISO = new Date(`${selectedDate}T${selectedTimeSlot}:00`).toISOString();
+      const startTimeISO = toLocalISOStringWithOffset(selectedDate, selectedTimeSlot);
 
       const bookingRes = await apiRequest(`/businesses/${business.id}/bookings`, {
         method: 'POST',
@@ -263,6 +291,7 @@ export default function CustomerBookingPage({
           serviceId: service.id,
           staffId: selectedStaffId,
           startTime: startTimeISO,
+          timezoneOffset: new Date().getTimezoneOffset(),
           notes: notes || undefined,
         }),
       });
@@ -329,7 +358,7 @@ export default function CustomerBookingPage({
     for (let i = 0; i < 7; i++) {
       const d = new Date(today);
       d.setDate(today.getDate() + i);
-      const iso = d.toISOString().split('T')[0];
+      const iso = formatLocalDateISO(d);
       const dayName = i === 0 ? 'Today' : d.toLocaleDateString('en-US', { weekday: 'short' });
       const monthDay = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
       dates.push({ iso, dayName, monthDay });
@@ -660,7 +689,10 @@ export default function CustomerBookingPage({
                           <button
                             key={slot.isoStart}
                             type="button"
-                            onClick={() => setSelectedTimeSlot(slot.value)}
+                            onClick={() => {
+                              setBookingError(null);
+                              setSelectedTimeSlot(slot.value);
+                            }}
                             className={`py-2.5 px-3 rounded-xl text-xs font-mono font-bold border transition-all duration-200 hover:-translate-y-0.5 cursor-pointer ${
                               isSelected
                                 ? 'bg-[#1D4439] text-white border-[#1D4439] shadow-2xs ring-2 ring-[#1D4439]/30'
@@ -688,7 +720,10 @@ export default function CustomerBookingPage({
                           <button
                             key={slot.isoStart}
                             type="button"
-                            onClick={() => setSelectedTimeSlot(slot.value)}
+                            onClick={() => {
+                              setBookingError(null);
+                              setSelectedTimeSlot(slot.value);
+                            }}
                             className={`py-2.5 px-3 rounded-xl text-xs font-mono font-bold border transition-all duration-200 hover:-translate-y-0.5 cursor-pointer ${
                               isSelected
                                 ? 'bg-[#1D4439] text-white border-[#1D4439] shadow-2xs ring-2 ring-[#1D4439]/30'
@@ -716,7 +751,10 @@ export default function CustomerBookingPage({
                           <button
                             key={slot.isoStart}
                             type="button"
-                            onClick={() => setSelectedTimeSlot(slot.value)}
+                            onClick={() => {
+                              setBookingError(null);
+                              setSelectedTimeSlot(slot.value);
+                            }}
                             className={`py-2.5 px-3 rounded-xl text-xs font-mono font-bold border transition-all duration-200 hover:-translate-y-0.5 cursor-pointer ${
                               isSelected
                                 ? 'bg-[#1D4439] text-white border-[#1D4439] shadow-2xs ring-2 ring-[#1D4439]/30'

@@ -547,6 +547,14 @@ const getStaffSchedule = async (businessId, staffId) => {
 const setStaffSchedule = async (businessId, staffId, data) => {
   const validated = updateScheduleSchema.parse(data);
 
+  for (const s of validated.schedules) {
+    if (s.isAvailable && s.startTime >= s.endTime) {
+      const error = new Error(`Working hours for day ${s.dayOfWeek} must have startTime before endTime.`);
+      error.statusCode = 400;
+      throw error;
+    }
+  }
+
   await getStaffById(businessId, staffId);
 
   return await prisma.$transaction(async (tx) => {

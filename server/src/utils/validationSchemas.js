@@ -263,12 +263,14 @@ const createBookingSchema = z.object({
   staffId: z.string({ required_error: 'staffId is required' }).uuid('Invalid staff ID format'),
   startTime: z.string({ required_error: 'startTime is required' })
     .refine((val) => !isNaN(Date.parse(val)), 'Invalid ISO start time'),
+  timezoneOffset: z.number().int().min(-840).max(840).optional(),
   notes: z.string().trim().optional().nullable().or(z.literal('')),
 });
 
 const updateBookingSchema = z.object({
   staffId: z.string().uuid().optional(),
   startTime: z.string().refine((val) => !isNaN(Date.parse(val)), 'Invalid ISO start time').optional(),
+  timezoneOffset: z.number().int().min(-840).max(840).optional(),
   notes: z.string().trim().optional().nullable().or(z.literal('')),
 });
 

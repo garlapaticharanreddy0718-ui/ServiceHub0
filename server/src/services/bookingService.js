@@ -89,11 +89,96 @@ const validateEntities = async (businessId, customerId, serviceId, staffId) => {
 };
 
 /**
+ * Extract timezone offset in minutes (Date.prototype.getTimezoneOffset() convention: UTC - local)
+ * from an explicit offset value or an ISO-8601 string suffix such as +05:30 or -05:00.
+ */
+const extractTimezoneOffset = (startTimeRaw, explicitOffset) => {
+  if (explicitOffset !== undefined && explicitOffset !== null && explicitOffset !== '') {
+    const num = Number(explicitOffset);
+    if (!Number.isNaN(num) && Number.isFinite(num)) {
+      return num;
+    }
+  }
+  if (typeof startTimeRaw === 'string') {
+    const match = startTimeRaw.trim().match(/([+-])(\d{2}):(\d{2})$/);
+    if (match) {
+      const sign = match[1] === '+' ? 1 : -1;
+      const hours = parseInt(match[2], 10);
+      const mins = parseInt(match[3], 10);
+      return -(sign * (hours * 60 + mins));
+    }
+  }
+  return null;
+};
+
+/**
+ * Parse a booking startTime string into a Date, applying tzOffsetMinutes when no zone is specified.
+ */
+const parseBookingStartTime = (startTimeRaw, tzOffsetMinutes) => {
+  if (typeof startTimeRaw === 'string') {
+    const trimmed = startTimeRaw.trim();
+    const hasZone = /(Z|[+-]\d{2}:\d{2})$/i.test(trimmed);
+    if (!hasZone && tzOffsetMinutes !== null && tzOffsetMinutes !== undefined) {
+      const offsetTotal = -tzOffsetMinutes;
+      const sign = offsetTotal >= 0 ? '+' : '-';
+      const absMin = Math.abs(offsetTotal);
+      const hh = String(Math.floor(absMin / 60)).padStart(2, '0');
+      const mm = String(absMin % 60).padStart(2, '0');
+      return new Date(`${trimmed}${sign}${hh}:${mm}`);
+    }
+  }
+  return new Date(startTimeRaw);
+};
+
+/**
+ * Construct a UTC Date corresponding to a wall-clock time in offsetMinutes (UTC - local).
+ */
+const buildZonedDateTime = (year, monthZeroBased, day, hour, minute, offsetMinutes) => {
+  return new Date(Date.UTC(year, monthZeroBased, day, hour, minute, 0, 0) + offsetMinutes * 60 * 1000);
+};
+
+/**
+ * Parse a YYYY-MM-DD calendar date string without local/UTC day-shift.
+ */
+const parseCalendarDate = (dateInput) => {
+  if (typeof dateInput === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateInput.trim())) {
+    const [year, month, day] = dateInput.trim().split('-').map(Number);
+    const utcCheck = new Date(Date.UTC(year, month - 1, day));
+    if (
+      !isNaN(utcCheck.getTime()) &&
+      utcCheck.getUTCFullYear() === year &&
+      utcCheck.getUTCMonth() === month - 1 &&
+      utcCheck.getUTCDate() === day
+    ) {
+      return { year, month, day };
+    }
+    return null;
+  }
+  const parsed = new Date(dateInput);
+  if (isNaN(parsed.getTime())) return null;
+  return {
+    year: parsed.getFullYear(),
+    month: parsed.getMonth() + 1,
+    day: parsed.getDate(),
+  };
+};
+
+/**
  * Validates staff working hours and time-off schedule
  */
-const validateStaffSchedule = async (staffId, startTimeDate, endTimeDate) => {
+const validateStaffSchedule = async (staffId, startTimeDate, endTimeDate, tzOffsetMinutes = null) => {
+  const offsetMinutes =
+    tzOffsetMinutes !== null && tzOffsetMinutes !== undefined && !Number.isNaN(Number(tzOffsetMinutes))
+      ? Number(tzOffsetMinutes)
+      : startTimeDate.getTimezoneOffset();
+
+  const shiftedStart = new Date(startTimeDate.getTime() - offsetMinutes * 60 * 1000);
+  const year = shiftedStart.getUTCFullYear();
+  const month = shiftedStart.getUTCMonth();
+  const day = shiftedStart.getUTCDate();
+
   // Day of week: 0 = Sunday, 1 = Monday, ..., 6 = Saturday
-  const dayOfWeek = startTimeDate.getDay();
+  const dayOfWeek = shiftedStart.getUTCDay();
 
   const schedule = await prisma.staffSchedule.findUnique({
     where: {
@@ -110,15 +195,12 @@ const validateStaffSchedule = async (staffId, startTimeDate, endTimeDate) => {
     throw error;
   }
 
-  // Parse HH:MM working hours for requested date
+  // Parse HH:MM working hours for requested date in the caller's/local wall-clock timezone
   const [startH, startM] = schedule.startTime.split(':').map(Number);
   const [endH, endM] = schedule.endTime.split(':').map(Number);
 
-  const workStart = new Date(startTimeDate);
-  workStart.setHours(startH, startM, 0, 0);
-
-  const workEnd = new Date(startTimeDate);
-  workEnd.setHours(endH, endM, 0, 0);
+  const workStart = buildZonedDateTime(year, month, day, startH, startM || 0, offsetMinutes);
+  const workEnd = buildZonedDateTime(year, month, day, endH, endM || 0, offsetMinutes);
 
   if (startTimeDate < workStart || endTimeDate > workEnd) {
     const error = new Error(`Booking time (${schedule.startTime} - ${schedule.endTime}) is outside staff working hours.`);
@@ -153,11 +235,8 @@ const validateStaffSchedule = async (staffId, startTimeDate, endTimeDate) => {
     const [bStartH, bStartM] = b.startTime.split(':').map(Number);
     const [bEndH, bEndM] = b.endTime.split(':').map(Number);
 
-    const breakStart = new Date(startTimeDate);
-    breakStart.setHours(bStartH, bStartM, 0, 0);
-
-    const breakEnd = new Date(startTimeDate);
-    breakEnd.setHours(bEndH, bEndM, 0, 0);
+    const breakStart = buildZonedDateTime(year, month, day, bStartH, bStartM || 0, offsetMinutes);
+    const breakEnd = buildZonedDateTime(year, month, day, bEndH, bEndM || 0, offsetMinutes);
 
     if (startTimeDate < breakEnd && endTimeDate > breakStart) {
       const error = new Error(`Booking time overlaps with staff break (${b.label || 'Break'}: ${b.startTime} - ${b.endTime}).`);
@@ -173,7 +252,8 @@ const validateStaffSchedule = async (staffId, startTimeDate, endTimeDate) => {
 const createBooking = async (businessId, userId, data) => {
   const validated = createBookingSchema.parse(data);
 
-  const startTimeDate = new Date(validated.startTime);
+  const tzOffsetMinutes = extractTimezoneOffset(validated.startTime, validated.timezoneOffset);
+  const startTimeDate = parseBookingStartTime(validated.startTime, tzOffsetMinutes);
   if (isNaN(startTimeDate.getTime())) {
     const error = new Error('Invalid start time date format.');
     error.statusCode = 400;
@@ -243,7 +323,7 @@ const createBooking = async (businessId, userId, data) => {
   }
 
   // 4. Validate Staff Schedule Working Hours & Time Off
-  await validateStaffSchedule(validated.staffId, startTimeDate, endTimeDate);
+  await validateStaffSchedule(validated.staffId, startTimeDate, endTimeDate, tzOffsetMinutes);
 
   // 5. Concurrency Safety: Atomic transaction with PostgreSQL Advisory Lock on Staff ID
   return await prisma.$transaction(async (tx) => {
@@ -563,7 +643,16 @@ const updateBooking = async (businessId, userId, userRole, bookingId, data) => {
   const existing = await getBookingById(businessId, userRole, userId, bookingId);
 
   const staffId = validated.staffId || existing.staffId;
-  const startTimeDate = validated.startTime ? new Date(validated.startTime) : new Date(existing.startTime);
+  const tzOffsetMinutes = extractTimezoneOffset(validated.startTime, validated.timezoneOffset);
+  const startTimeDate = validated.startTime
+    ? parseBookingStartTime(validated.startTime, tzOffsetMinutes)
+    : new Date(existing.startTime);
+
+  if (isNaN(startTimeDate.getTime())) {
+    const error = new Error('Invalid start time date format.');
+    error.statusCode = 400;
+    throw error;
+  }
 
   // Validate entities
   const { service } = await validateEntities(businessId, existing.customerId, existing.serviceId, staffId);
@@ -572,7 +661,7 @@ const updateBooking = async (businessId, userId, userRole, bookingId, data) => {
   const endTimeDate = new Date(startTimeDate.getTime() + service.durationMinutes * 60 * 1000);
 
   // Validate Staff Schedule & Time Off
-  await validateStaffSchedule(staffId, startTimeDate, endTimeDate);
+  await validateStaffSchedule(staffId, startTimeDate, endTimeDate, tzOffsetMinutes);
 
   // Execute Transaction with PostgreSQL Advisory Locking
   return await prisma.$transaction(async (tx) => {
@@ -698,7 +787,7 @@ const getBookingHistory = async (businessId, userRole, userId, bookingId) => {
  * Availability checking API
  */
 const getAvailability = async (businessId, query = {}) => {
-  const { staffId, serviceId, date } = query;
+  const { staffId, serviceId, date, excludeBookingId } = query;
 
   if (!staffId || !serviceId || !date) {
     const error = new Error('staffId, serviceId, and date query parameters are required.');
@@ -724,14 +813,21 @@ const getAvailability = async (businessId, query = {}) => {
     throw error;
   }
 
-  const targetDate = new Date(date);
-  if (isNaN(targetDate.getTime())) {
+  const parsedDate = parseCalendarDate(date);
+  if (!parsedDate) {
     const error = new Error('Invalid date format.');
     error.statusCode = 400;
     throw error;
   }
 
-  const dayOfWeek = targetDate.getDay();
+  const { year, month, day } = parsedDate;
+  const dayOfWeek = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+
+  const parsedTzOffset = query.tzOffset !== undefined && query.tzOffset !== '' ? Number(query.tzOffset) : NaN;
+  const tzOffsetMinutes =
+    !Number.isNaN(parsedTzOffset) && Number.isFinite(parsedTzOffset)
+      ? parsedTzOffset
+      : new Date().getTimezoneOffset();
 
   const schedule = await prisma.staffSchedule.findUnique({
     where: {
@@ -742,14 +838,14 @@ const getAvailability = async (businessId, query = {}) => {
     },
   });
 
-  const dayStart = new Date(targetDate);
-  dayStart.setHours(0, 0, 0, 0);
-  const dayEnd = new Date(targetDate);
-  dayEnd.setHours(23, 59, 59, 999);
+  const dayStart = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0) + tzOffsetMinutes * 60 * 1000);
+  const dayEnd = new Date(Date.UTC(year, month - 1, day, 23, 59, 59, 999) + tzOffsetMinutes * 60 * 1000);
 
   const now = new Date();
-  const todayStr = now.toISOString().split('T')[0];
-  const isPastDate = date < todayStr;
+  const localNow = new Date(now.getTime() - tzOffsetMinutes * 60 * 1000);
+  const todayStr = localNow.toISOString().slice(0, 10);
+  const normalizedDateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  const isPastDate = normalizedDateStr < todayStr;
 
   const [timeOff, breaks, activeBookings] = await Promise.all([
     prisma.staffTimeOff.findMany({
@@ -782,15 +878,71 @@ const getAvailability = async (businessId, query = {}) => {
     }),
   ]);
 
+  const slots = [];
+  if (!isPastDate && schedule && schedule.isAvailable && schedule.startTime && schedule.endTime) {
+    const [startH, startM] = schedule.startTime.split(':').map(Number);
+    const [endH, endM] = schedule.endTime.split(':').map(Number);
+
+    const workStart = buildZonedDateTime(year, month - 1, day, startH, startM || 0, tzOffsetMinutes);
+    const workEnd = buildZonedDateTime(year, month - 1, day, endH, endM || 0, tzOffsetMinutes);
+    const slotDurationMs = (service.durationMinutes || 30) * 60 * 1000;
+    const stepMs = 30 * 60 * 1000;
+
+    if (workStart < workEnd) {
+      let current = new Date(workStart);
+      while (current.getTime() + slotDurationMs <= workEnd.getTime()) {
+        const slotEnd = new Date(current.getTime() + slotDurationMs);
+
+        if (current.getTime() <= now.getTime()) {
+          current = new Date(current.getTime() + stepMs);
+          continue;
+        }
+
+        const isTimeOffConflict = timeOff.some(
+          (to) => current < new Date(to.endDateTime) && slotEnd > new Date(to.startDateTime)
+        );
+
+        const isBreakConflict = breaks.some((br) => {
+          const [bStartH, bStartM] = br.startTime.split(':').map(Number);
+          const [bEndH, bEndM] = br.endTime.split(':').map(Number);
+          const brStart = buildZonedDateTime(year, month - 1, day, bStartH, bStartM || 0, tzOffsetMinutes);
+          const brEnd = buildZonedDateTime(year, month - 1, day, bEndH, bEndM || 0, tzOffsetMinutes);
+          return current < brEnd && slotEnd > brStart;
+        });
+
+        const isBookingConflict = activeBookings.some((b) => {
+          if (excludeBookingId && b.id === excludeBookingId) return false;
+          return current < new Date(b.endTime) && slotEnd > new Date(b.startTime);
+        });
+
+        if (!isTimeOffConflict && !isBreakConflict && !isBookingConflict) {
+          const shifted = new Date(current.getTime() - tzOffsetMinutes * 60 * 1000);
+          const hh = shifted.getUTCHours();
+          const mm = shifted.getUTCMinutes();
+          const value = `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+          slots.push({
+            value,
+            isoStart: current.toISOString(),
+            isoEnd: slotEnd.toISOString(),
+          });
+        }
+
+        current = new Date(current.getTime() + stepMs);
+      }
+    }
+  }
+
   return {
     staffId,
     serviceId,
-    date,
+    date: normalizedDateStr,
+    dayOfWeek,
     isPastDate,
     schedule: schedule || null,
     timeOff,
     breaks,
     bookings: activeBookings,
+    slots,
   };
 };
 

@@ -130,6 +130,13 @@ export default function StaffManagement({ business, currentUser }) {
 
   const handleOpenScheduleModal = async (staff) => {
     setSelectedStaff(staff);
+    const defaultSchedules = DAYS.map((_, index) => ({
+      dayOfWeek: index,
+      startTime: '09:00',
+      endTime: '17:00',
+      isAvailable: index >= 1 && index <= 5,
+    }));
+    setSchedulesForm(defaultSchedules);
     try {
       const res = await apiRequest(`/businesses/${business.id}/staff/${staff.id}/schedule`);
       if (res.ok) {
@@ -137,14 +144,19 @@ export default function StaffManagement({ business, currentUser }) {
         if (data.data && data.data.length > 0) {
           const updated = DAYS.map((_, index) => {
             const found = data.data.find((s) => s.dayOfWeek === index);
-            return (
-              found || {
-                dayOfWeek: index,
-                startTime: '09:00',
-                endTime: '17:00',
-                isAvailable: false,
-              }
-            );
+            return found
+              ? {
+                  dayOfWeek: found.dayOfWeek,
+                  startTime: found.startTime,
+                  endTime: found.endTime,
+                  isAvailable: Boolean(found.isAvailable),
+                }
+              : {
+                  dayOfWeek: index,
+                  startTime: '09:00',
+                  endTime: '17:00',
+                  isAvailable: false,
+                };
           });
           setSchedulesForm(updated);
         }
@@ -522,7 +534,7 @@ export default function StaffManagement({ business, currentUser }) {
                       checked={sch.isAvailable}
                       onChange={(e) => {
                         const updated = [...(staffForm.schedules || [])];
-                        updated[idx].isAvailable = e.target.checked;
+                        updated[idx] = { ...updated[idx], isAvailable: e.target.checked };
                         setStaffForm((prev) => ({ ...prev, schedules: updated }));
                       }}
                       className="rounded text-emerald-700 focus:ring-emerald-600"
@@ -537,7 +549,7 @@ export default function StaffManagement({ business, currentUser }) {
                         value={sch.startTime}
                         onChange={(e) => {
                           const updated = [...(staffForm.schedules || [])];
-                          updated[idx].startTime = e.target.value;
+                          updated[idx] = { ...updated[idx], startTime: e.target.value };
                           setStaffForm((prev) => ({ ...prev, schedules: updated }));
                         }}
                         className="bg-white border border-slate-200 rounded-md px-2 py-1 font-mono text-xs focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600"
@@ -548,7 +560,7 @@ export default function StaffManagement({ business, currentUser }) {
                         value={sch.endTime}
                         onChange={(e) => {
                           const updated = [...(staffForm.schedules || [])];
-                          updated[idx].endTime = e.target.value;
+                          updated[idx] = { ...updated[idx], endTime: e.target.value };
                           setStaffForm((prev) => ({ ...prev, schedules: updated }));
                         }}
                         className="bg-white border border-slate-200 rounded-md px-2 py-1 font-mono text-xs focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600"
@@ -826,7 +838,7 @@ export default function StaffManagement({ business, currentUser }) {
                     checked={sch.isAvailable}
                     onChange={(e) => {
                       const updated = [...schedulesForm];
-                      updated[idx].isAvailable = e.target.checked;
+                      updated[idx] = { ...updated[idx], isAvailable: e.target.checked };
                       setSchedulesForm(updated);
                     }}
                     className="rounded text-indigo-600 focus:ring-indigo-500"
@@ -841,7 +853,7 @@ export default function StaffManagement({ business, currentUser }) {
                       value={sch.startTime}
                       onChange={(e) => {
                         const updated = [...schedulesForm];
-                        updated[idx].startTime = e.target.value;
+                        updated[idx] = { ...updated[idx], startTime: e.target.value };
                         setSchedulesForm(updated);
                       }}
                       className="bg-white border border-slate-200 rounded-lg px-2.5 py-1 font-mono text-xs focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 shadow-2xs"
@@ -852,7 +864,7 @@ export default function StaffManagement({ business, currentUser }) {
                       value={sch.endTime}
                       onChange={(e) => {
                         const updated = [...schedulesForm];
-                        updated[idx].endTime = e.target.value;
+                        updated[idx] = { ...updated[idx], endTime: e.target.value };
                         setSchedulesForm(updated);
                       }}
                       className="bg-white border border-slate-200 rounded-lg px-2.5 py-1 font-mono text-xs focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 shadow-2xs"

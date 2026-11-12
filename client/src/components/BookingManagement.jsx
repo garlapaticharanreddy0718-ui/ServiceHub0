@@ -26,6 +26,7 @@ import Select from './ui/Select';
 import EmptyState from './ui/EmptyState';
 import LoadingState from './ui/LoadingState';
 import AppointmentDetailsModal from './AppointmentDetailsModal';
+import { formatLocalDateISO, toLocalISOStringWithOffset } from '../utils/dateUtils';
 
 export default function BookingManagement({ selectedBusiness, currentUser }) {
   const [bookings, setBookings] = useState([]);
@@ -146,7 +147,7 @@ export default function BookingManagement({ selectedBusiness, currentUser }) {
   }, [fetchReferenceData, fetchBookings]);
 
   const handleOpenCreateModal = () => {
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = formatLocalDateISO(new Date());
     setCreateForm({
       customerId: customers[0]?.id || '',
       serviceId: services[0]?.id || '',
@@ -163,13 +164,14 @@ export default function BookingManagement({ selectedBusiness, currentUser }) {
     setError(null);
     setActionSuccess(null);
 
-    const startIso = new Date(`${createForm.date}T${createForm.time}:00`).toISOString();
+    const startIso = toLocalISOStringWithOffset(createForm.date, createForm.time);
 
     const payload = {
       customerId: createForm.customerId,
       serviceId: createForm.serviceId,
       staffId: createForm.staffId,
       startTime: startIso,
+      timezoneOffset: new Date().getTimezoneOffset(),
       notes: createForm.notes || undefined,
     };
 
@@ -245,8 +247,8 @@ export default function BookingManagement({ selectedBusiness, currentUser }) {
 
   const handleOpenRescheduleModal = (booking) => {
     const d = new Date(booking.startTime);
-    const dateStr = d.toISOString().split('T')[0];
-    const timeStr = d.toTimeString().substring(0, 5);
+    const dateStr = formatLocalDateISO(d);
+    const timeStr = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 
     setActiveBooking(booking);
     setRescheduleForm({
@@ -262,7 +264,7 @@ export default function BookingManagement({ selectedBusiness, currentUser }) {
     e.preventDefault();
     if (!activeBooking) return;
 
-    const startIso = new Date(`${rescheduleForm.date}T${rescheduleForm.time}:00`).toISOString();
+    const startIso = toLocalISOStringWithOffset(rescheduleForm.date, rescheduleForm.time);
 
     try {
       const res = await apiRequest(`/businesses/${selectedBusiness.id}/bookings/${activeBooking.id}`, {
@@ -270,6 +272,7 @@ export default function BookingManagement({ selectedBusiness, currentUser }) {
         body: JSON.stringify({
           staffId: rescheduleForm.staffId,
           startTime: startIso,
+          timezoneOffset: new Date().getTimezoneOffset(),
           notes: rescheduleForm.notes || undefined,
         }),
       });
