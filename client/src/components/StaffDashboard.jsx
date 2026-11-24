@@ -46,7 +46,15 @@ import Badge from './ui/Badge';
 import LoadingState from './ui/LoadingState';
 
 export default function StaffDashboard({ business, currentUser, onLogout }) {
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const [activeTab, setActiveTab] = useState(() => {
+    const saved = sessionStorage.getItem('servicehub_staff_tab');
+    const valid = ['dashboard', 'appointments', 'schedule', 'clients', 'time-off', 'profile'];
+    return saved && valid.includes(saved) ? saved : 'dashboard';
+  });
+
+  useEffect(() => {
+    sessionStorage.setItem('servicehub_staff_tab', activeTab);
+  }, [activeTab]);
   const [bookings, setBookings] = useState([]);
   const [services, setServices] = useState([]);
   const [customers, setCustomers] = useState([]);

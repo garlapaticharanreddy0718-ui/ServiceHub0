@@ -58,10 +58,28 @@ const RATING_DESCRIPTIONS = {
   5: '5 — Excellent',
 };
 
-export default function CustomerPortal({ currentUser, onLogout, activeTabProp = 'browse', onNavigateTab }) {
-  const [activeTab, setActiveTab] = useState(activeTabProp); // 'browse' | 'my-bookings' | 'reviews' | 'business-services' | 'book'
+const readStoredJson = (key) => {
+  try {
+    const raw = sessionStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    return null;
+  }
+};
+
+export default function CustomerPortal({ currentUser, onLogout, activeTabProp = 'browse', browseResetKey = 0, onNavigateTab }) {
+  const [selectedBiz, setSelectedBiz] = useState(() => readStoredJson('servicehub_customer_selected_biz'));
+  const [selectedService, setSelectedService] = useState(() => readStoredJson('servicehub_customer_selected_service'));
+  const [activeTab, setActiveTab] = useState(() => {
+    if (activeTabProp !== 'browse') return activeTabProp;
+    const savedSubtab = sessionStorage.getItem('servicehub_customer_subtab');
+    const savedBiz = readStoredJson('servicehub_customer_selected_biz');
+    const savedSvc = readStoredJson('servicehub_customer_selected_service');
+    if (savedSubtab === 'book' && savedBiz && savedSvc) return 'book';
+    if (savedSubtab === 'business-services' && savedBiz) return 'business-services';
+    return 'browse';
+  }); // 'browse' | 'my-bookings' | 'reviews' | 'business-services' | 'book'
   const [businesses, setBusinesses] = useState([]);
-  const [selectedBiz, setSelectedBiz] = useState(null);
   const [services, setServices] = useState([]);
   const [staff, setStaff] = useState([]);
   const [myCustomerRecord, setMyCustomerRecord] = useState(null);
@@ -71,7 +89,6 @@ export default function CustomerPortal({ currentUser, onLogout, activeTabProp = 
   const [selectedServiceCat, setSelectedServiceCat] = useState('All');
   const [error, setError] = useState(null);
   const [bookingSuccess, setBookingSuccess] = useState(null);
-  const [selectedService, setSelectedService] = useState(null);
 
   // Location & Discovery State
   const [locationState, setLocationState] = useState('idle'); // 'idle' | 'loading' | 'granted' | 'denied' | 'unsupported'
@@ -123,6 +140,7 @@ export default function CustomerPortal({ currentUser, onLogout, activeTabProp = 
 
   const catalogSectionRef = useRef(null);
   const prevActiveTabPropRef = useRef(activeTabProp);
+  const prevBrowseResetKeyRef = useRef(browseResetKey);
 
   useEffect(() => {
     if (activeTabProp !== prevActiveTabPropRef.current) {
@@ -130,6 +148,31 @@ export default function CustomerPortal({ currentUser, onLogout, activeTabProp = 
       setActiveTab(activeTabProp);
     }
   }, [activeTabProp]);
+
+  useEffect(() => {
+    if (browseResetKey !== prevBrowseResetKeyRef.current) {
+      prevBrowseResetKeyRef.current = browseResetKey;
+      setActiveTab('browse');
+    }
+  }, [browseResetKey]);
+
+  useEffect(() => {
+    if (['browse', 'business-services', 'book'].includes(activeTab)) {
+      sessionStorage.setItem('servicehub_customer_subtab', activeTab);
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (selectedBiz) {
+      sessionStorage.setItem('servicehub_customer_selected_biz', JSON.stringify(selectedBiz));
+    }
+  }, [selectedBiz]);
+
+  useEffect(() => {
+    if (selectedService) {
+      sessionStorage.setItem('servicehub_customer_selected_service', JSON.stringify(selectedService));
+    }
+  }, [selectedService]);
 
   // Scroll locking & Escape key listener for View Details modal
   useEffect(() => {
@@ -257,7 +300,7 @@ export default function CustomerPortal({ currentUser, onLogout, activeTabProp = 
 
           if (bizList.length > 0) {
             setSelectedBiz((prev) => {
-              if (prev && bizList.some((b) => b.id === prev.id)) return prev;
+              if (prev) return prev;
               const first = bizList[0];
               loadBusinessDetails(first.id, false);
               return first;
@@ -278,6 +321,9 @@ export default function CustomerPortal({ currentUser, onLogout, activeTabProp = 
 
   useEffect(() => {
     fetchNearbyCatalog(userCoords, selectedCategory, searchTerm, sortBy, radiusKm);
+    if (selectedBiz?.id && (activeTab === 'business-services' || activeTab === 'book')) {
+      loadBusinessDetails(selectedBiz.id, false);
+    }
   }, []);
 
   // 2. Browser Geolocation Handler

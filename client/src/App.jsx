@@ -34,6 +34,7 @@ export default function App() {
   const [loginRoleError, setLoginRoleError] = useState(null);
   const [authRoleMode, setAuthRoleMode] = useState('customer');
   const [showSetupModal, setShowSetupModal] = useState(false);
+  const [customerBrowseKey, setCustomerBrowseKey] = useState(0);
 
   const fetchUserBusinesses = useCallback(async () => {
     try {
@@ -43,7 +44,9 @@ export default function App() {
         const bizList = data.data || [];
         setBusinesses(bizList);
         if (bizList.length > 0) {
-          setSelectedBusiness(bizList[0]);
+          const savedBizId = sessionStorage.getItem('servicehub_selected_business_id');
+          const matchedBiz = savedBizId ? bizList.find((b) => b.id === savedBizId) : null;
+          setSelectedBusiness(matchedBiz || bizList[0]);
           return bizList;
         }
       }
@@ -53,18 +56,27 @@ export default function App() {
     return [];
   }, []);
 
-  // Persist current tab and role in sessionStorage for page refresh restoration
+  // Persist current tab, role, and selected business in sessionStorage for page refresh restoration
   useEffect(() => {
-    if (currentUser) {
+    if (!initializing && currentUser) {
       sessionStorage.setItem('servicehub_active_tab', activeTab);
       sessionStorage.setItem('servicehub_active_role', activeRole);
     }
-  }, [activeTab, activeRole, currentUser]);
+  }, [activeTab, activeRole, currentUser, initializing]);
+
+  useEffect(() => {
+    if (!initializing && currentUser && selectedBusiness?.id) {
+      sessionStorage.setItem('servicehub_selected_business_id', selectedBusiness.id);
+    }
+  }, [selectedBusiness?.id, currentUser, initializing]);
 
   // Silent session restore on initial page load
   useEffect(() => {
     async function restoreSession() {
       try {
+        const savedRole = sessionStorage.getItem('servicehub_active_role');
+        const savedTab = sessionStorage.getItem('servicehub_active_tab');
+
         const refreshResponse = await apiRequest('/auth/refresh', { method: 'POST' });
         if (refreshResponse.ok) {
           const refreshData = await refreshResponse.json();
@@ -74,7 +86,6 @@ export default function App() {
           if (meResponse.ok) {
             const meData = await meResponse.json();
             const user = meData.data.user;
-            setCurrentUser(user);
 
             const userBizs = await fetchUserBusinesses();
 
@@ -82,11 +93,9 @@ export default function App() {
             const hasOwnerRole = userBizs.some((b) => b.currentUserRole === 'OWNER' || b.currentUserRole === 'ADMIN');
             const hasStaffRole = userBizs.some((b) => b.currentUserRole === 'STAFF');
 
-            const savedRole = sessionStorage.getItem('servicehub_active_role');
-            let savedTab = sessionStorage.getItem('servicehub_active_tab');
-
             const validCustomerTabs = ['customer-portal', 'customer-discover', 'customer-appointments', 'customer-reviews', 'account'];
             const validOwnerTabs = ['dashboard', 'bookings', 'calendar', 'customers', 'services', 'team', 'staff', 'reviews', 'reports', 'performance', 'opportunities', 'settings', 'onboarding', 'account'];
+            const validStaffTabs = ['staff-dashboard', 'account'];
 
             if (hasOwnerRole) {
               if (savedRole === 'customer' && savedTab && validCustomerTabs.includes(savedTab)) {
@@ -94,7 +103,7 @@ export default function App() {
                 setActiveTab(savedTab);
               } else if (savedRole === 'staff' && hasStaffRole) {
                 setActiveRole('staff');
-                setActiveTab('staff-dashboard');
+                setActiveTab(savedTab && validStaffTabs.includes(savedTab) ? savedTab : 'staff-dashboard');
               } else {
                 let resolvedOwnerTab = savedTab && validOwnerTabs.includes(savedTab) ? savedTab : 'dashboard';
                 if (userBizs.length > 0 && resolvedOwnerTab === 'onboarding') {
@@ -109,13 +118,15 @@ export default function App() {
                 setActiveTab(savedTab);
               } else {
                 setActiveRole('staff');
-                setActiveTab('staff-dashboard');
+                setActiveTab(savedTab && validStaffTabs.includes(savedTab) ? savedTab : 'staff-dashboard');
               }
             } else {
               // Pure Customer (No business staff/owner memberships)
               setActiveRole('customer');
               setActiveTab(savedTab && validCustomerTabs.includes(savedTab) ? savedTab : 'customer-portal');
             }
+
+            setCurrentUser(user);
           }
         }
       } catch (err) {
@@ -209,6 +220,11 @@ export default function App() {
     setShowSetupModal(false);
     sessionStorage.removeItem('servicehub_active_tab');
     sessionStorage.removeItem('servicehub_active_role');
+    sessionStorage.removeItem('servicehub_selected_business_id');
+    sessionStorage.removeItem('servicehub_customer_subtab');
+    sessionStorage.removeItem('servicehub_customer_selected_biz');
+    sessionStorage.removeItem('servicehub_customer_selected_service');
+    sessionStorage.removeItem('servicehub_staff_tab');
   };
 
   const handleBusinessCreated = async (newBusiness) => {
@@ -380,7 +396,12 @@ export default function App() {
         <>
           <Header
             activeTab={activeTab}
-            setActiveTab={setActiveTab}
+            setActiveTab={(tab) => {
+              if (tab === 'customer-portal') {
+                setCustomerBrowseKey((k) => k + 1);
+              }
+              setActiveTab(tab);
+            }}
             currentUser={currentUser}
             businesses={businesses}
             selectedBusiness={selectedBusiness}
@@ -421,6 +442,7 @@ export default function App() {
                   <CustomerPortal
                     currentUser={currentUser}
                     onLogout={handleLogout}
+                    browseResetKey={customerBrowseKey}
                     activeTabProp={
                       activeTab === 'customer-appointments'
                         ? 'my-bookings'
