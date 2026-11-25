@@ -18,14 +18,9 @@ const {
   handleUpdateStaffBreak,
   handleDeleteStaffBreak,
 } = require('../controllers/staffManagementController');
-const { authenticate } = require('../middleware/authMiddleware');
-const { requireBusinessMember, requireRole, requireStaffSelfOrAdmin } = require('../middleware/rbacMiddleware');
+const { requireRole, requireStaffSelfOrAdmin } = require('../middleware/rbacMiddleware');
 
 const router = express.Router({ mergeParams: true });
-
-// Require authentication and business membership for all staff routes
-router.use(authenticate);
-router.use(requireBusinessMember);
 
 // Staff profile management
 router.get('/staff', handleGetStaffList);

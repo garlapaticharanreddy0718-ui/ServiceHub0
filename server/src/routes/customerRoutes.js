@@ -10,14 +10,9 @@ const {
   handleUpdateCustomerNote,
   handleDeleteCustomerNote,
 } = require('../controllers/customerController');
-const { authenticate } = require('../middleware/authMiddleware');
-const { requireBusinessMember, requireRole } = require('../middleware/rbacMiddleware');
+const { requireRole } = require('../middleware/rbacMiddleware');
 
 const router = express.Router({ mergeParams: true });
-
-// Require authentication and business membership for all customer routes
-router.use(authenticate);
-router.use(requireBusinessMember);
 
 // Customer Records CRUD
 router.get('/customers', handleGetCustomers);

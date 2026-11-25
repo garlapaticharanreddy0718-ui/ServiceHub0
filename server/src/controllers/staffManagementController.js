@@ -19,8 +19,7 @@ const {
   deleteStaffBreak,
 } = require('../services/staffManagementService');
 const { ZodError } = require('zod');
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+const prisma = require('../config/prisma');
 
 const resolveStaffIdFromReq = async (req) => {
   if (req.params.staffId && req.params.staffId !== 'me' && ['OWNER', 'ADMIN'].includes(req.businessMember?.role)) {

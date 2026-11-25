@@ -1,5 +1,4 @@
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+const prisma = require('../config/prisma');
 
 /**
  * Middleware verifying authenticated user is a member of the requested business
@@ -55,6 +54,16 @@ const requireBusinessMember = async (req, res, next) => {
     req.businessMember = member;
     next();
   } catch (err) {
+    console.error('[RBAC] Failed to verify business membership:', {
+      method: req.method,
+      path: req.originalUrl,
+      businessId,
+      userId: req.user?.id,
+      name: err.name,
+      code: err.code,
+      message: err.message,
+    });
+
     return res.status(500).json({
       success: false,
       message: 'Failed to verify business membership.',
@@ -111,6 +120,15 @@ const requireStaffSelfOrAdmin = async (req, res, next) => {
         return next();
       }
     } catch (err) {
+      console.error('[RBAC] Failed to verify staff self-access:', {
+        method: req.method,
+        path: req.originalUrl,
+        staffId: req.params.staffId,
+        userId: req.user?.id,
+        name: err.name,
+        code: err.code,
+        message: err.message,
+      });
       // Fallthrough to 403
     }
   }

@@ -1,6 +1,5 @@
 const bcrypt = require('bcryptjs');
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+const prisma = require('../config/prisma');
 
 const { registerSchema, loginSchema, changePasswordSchema } = require('../utils/validationSchemas');
 const {

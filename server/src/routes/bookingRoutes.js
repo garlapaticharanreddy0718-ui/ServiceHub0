@@ -9,14 +9,7 @@ const {
   handleGetBookingHistory,
   handleGetAvailability,
 } = require('../controllers/bookingController');
-const { authenticate } = require('../middleware/authMiddleware');
-const { requireBusinessMember, requireRole } = require('../middleware/rbacMiddleware');
-
 const router = express.Router({ mergeParams: true });
-
-// Require authentication and business membership for all booking routes
-router.use(authenticate);
-router.use(requireBusinessMember);
 
 // Availability Checking API
 router.get('/availability', handleGetAvailability);

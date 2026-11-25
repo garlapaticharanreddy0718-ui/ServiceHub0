@@ -1,6 +1,5 @@
 const { verifyAccessToken } = require('../utils/tokenUtils');
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+const prisma = require('../config/prisma');
 
 /**
  * Protect routes by verifying JWT Bearer token in Authorization header
@@ -49,6 +48,14 @@ const authenticate = async (req, res, next) => {
         message: 'Access token expired.',
       });
     }
+
+    console.error('[Auth] Authentication verification failed:', {
+      method: req.method,
+      path: req.originalUrl,
+      name: err.name,
+      code: err.code,
+      message: err.message,
+    });
 
     return res.status(401).json({
       status: 'fail',

@@ -11,6 +11,8 @@ const customerRoutes = require('./routes/customerRoutes');
 const bookingRoutes = require('./routes/bookingRoutes');
 const reviewRoutes = require('./routes/reviewRoutes');
 const ownerRoutes = require('./routes/ownerRoutes');
+const { authenticate } = require('./middleware/authMiddleware');
+const { requireBusinessMember } = require('./middleware/rbacMiddleware');
 const { notFoundHandler, errorHandler } = require('./middleware/errorHandler');
 
 const app = express();
@@ -41,10 +43,16 @@ app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/owner', ownerRoutes);
 app.use('/api/v1/reviews', reviewRoutes);
 app.use('/api/v1/businesses', businessRoutes);
-app.use('/api/v1/businesses/:businessId', serviceRoutes);
-app.use('/api/v1/businesses/:businessId', staffRoutes);
-app.use('/api/v1/businesses/:businessId', customerRoutes);
-app.use('/api/v1/businesses/:businessId', bookingRoutes);
+
+// Business-scoped resource routes: authenticate and verify membership once per request
+const businessScopedRouter = express.Router({ mergeParams: true });
+businessScopedRouter.use(authenticate);
+businessScopedRouter.use(requireBusinessMember);
+businessScopedRouter.use(serviceRoutes);
+businessScopedRouter.use(staffRoutes);
+businessScopedRouter.use(customerRoutes);
+businessScopedRouter.use(bookingRoutes);
+app.use('/api/v1/businesses/:businessId', businessScopedRouter);
 
 // Error Handling Middlewares
 app.use(notFoundHandler);
