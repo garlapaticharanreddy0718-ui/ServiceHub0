@@ -1,186 +1,452 @@
-# ServiceHub - Multi-Tenant SaaS Platform
+# ServiceHub
 
-ServiceHub is a multi-tenant SaaS platform engineered for service-based businesses (salons, tutors, repair & maintenance, photographers, consultants, wellness centers, and cleaning services).
+A full-stack multi-business service management platform built with **React.js, Node.js, Express.js, PostgreSQL, and Prisma**.
 
-This repository contains **Phase 1 — Project Foundation**, establishing a clean, scalable monorepo structure with a React frontend, Express REST API backend, and Prisma ORM configuration.
+ServiceHub allows businesses such as salons, fitness centers, tutors, repair services, and consultants to manage their services, staff, customers, and appointments from a single platform.
 
----
+## Live Demo
 
-## 🚀 Technology Stack
+**Frontend:** https://servicehub0.vercel.app/
 
-- **Frontend**: React.js (v18), Vite, JavaScript, Tailwind CSS (v3), Lucide Icons
-- **Backend**: Node.js, Express.js (v4), JavaScript (CommonJS)
-- **Database / ORM**: PostgreSQL, Prisma ORM (v5)
-- **Architecture**: Decoupled RESTful HTTP API (`/api/v1`)
+**Backend API:** https://servicehub0.onrender.com
 
----
+**Health Check:** https://servicehub0.onrender.com/api/v1/health
 
-## 📁 Project Structure
+## Features
 
+### Authentication & Authorization
+- Secure user authentication
+- JWT-based access authentication
+- HttpOnly refresh-token cookies
+- Password hashing with bcrypt
+- Role-based access control
+- Protected routes
+- Session persistence across browser refreshes
+
+### Multi-Tenant Business Management
+- Multiple businesses supported
+- Business-specific data isolation
+- Business membership management
+- Owner, Admin, and Staff roles
+- Role-based permissions
+
+### Service Management
+- Create and manage services
+- Service categories
+- Service pricing
+- Service duration
+- Staff-service assignment
+
+### Staff Management
+- Add and manage staff members
+- Staff roles and permissions
+- Staff schedules
+- Staff breaks
+- Staff time-off management
+- Staff availability validation
+
+### Customer Management
+- Customer profiles
+- Customer contact information
+- Customer notes
+- Business-specific customer records
+- CRM functionality
+
+### Appointment Management
+- Create and manage bookings
+- Customer and service selection
+- Staff assignment
+- Appointment duration and pricing
+- Availability validation
+- Schedule conflict detection
+- Booking status management
+- Booking status history
+- Business-scoped appointments
+
+### Dashboard & Management UI
+- Professional SaaS-style interface
+- Responsive design
+- Business dashboard
+- Appointment management
+- Calendar
+- Customer management
+- Service management
+- Staff management
+- Role-specific experiences
+
+## Tech Stack
+
+### Frontend
+- React.js
+- JavaScript
+- Vite
+- Tailwind CSS
+- React Router
+
+### Backend
+- Node.js
+- Express.js
+- JavaScript
+- JWT
+- bcryptjs
+- Zod
+
+### Database
+- PostgreSQL
+- Prisma ORM
+- Supabase PostgreSQL
+
+### Deployment
+- Vercel — Frontend
+- Render — Backend
+- Supabase — PostgreSQL Database
+
+## Architecture
+
+```text
+                    ┌─────────────────────┐
+                    │      User Browser    │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │   React + Vite      │
+                    │   Frontend (Vercel)  │
+                    └──────────┬──────────┘
+                               │ REST API
+                               ▼
+                    ┌─────────────────────┐
+                    │ Node.js + Express    │
+                    │ Backend (Render)     │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │      Prisma ORM      │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │ PostgreSQL / Supabase│
+                    └─────────────────────┘
 ```
-servicehub/
+
+## Authentication Flow
+
+ServiceHub uses an access-token and refresh-token authentication architecture.
+
+```text
+User Login
+    │
+    ▼
+Backend validates credentials
+    │
+    ▼
+Access Token + HttpOnly Refresh Token
+    │
+    ▼
+Frontend stores authentication state
+    │
+    ▼
+Protected API Requests
+    │
+    ▼
+Access Token Expiry
+    │
+    ▼
+Refresh Token
+    │
+    ▼
+New Access Token
+```
+
+The refresh token is stored using an **HttpOnly cookie**, helping prevent direct JavaScript access to the refresh token.
+
+## Role-Based Access Control
+
+ServiceHub supports three primary business roles:
+
+| Role | Responsibilities |
+|---|---|
+| OWNER | Full business management |
+| ADMIN | Manage business operations and resources |
+| STAFF | Manage assigned services and appointments |
+
+Access to business resources is scoped according to the authenticated user's business membership and role.
+
+## Multi-Tenancy
+
+Each business operates within its own isolated data scope.
+
+For example:
+
+```text
+Business A
+ ├── Customers
+ ├── Services
+ ├── Staff
+ └── Bookings
+
+Business B
+ ├── Customers
+ ├── Services
+ ├── Staff
+ └── Bookings
+```
+
+Users can only access resources belonging to businesses for which they have the appropriate membership.
+
+## Booking Validation
+
+The booking system performs server-side validation for:
+
+- Business ownership
+- Customer association
+- Service availability
+- Staff-service assignment
+- Staff working schedule
+- Staff breaks
+- Staff time off
+- Schedule conflicts
+- Appointment duration
+- Appointment pricing
+
+This prevents invalid or conflicting appointments from being created.
+
+## Project Structure
+
+```text
+ServiceHub0/
 │
-├── client/                     # Frontend Application (React + Vite + Tailwind CSS)
-│   ├── public/                 # Static assets & SVG favicon
+├── client/
 │   ├── src/
-│   │   ├── components/         # Reusable UI components (Header, Footer, StatusCard)
-│   │   ├── App.jsx             # Main Application Status Page
-│   │   ├── main.jsx            # Application entry point
-│   │   └── index.css           # Tailwind CSS directives & global styling
-│   ├── index.html              # HTML shell
-│   ├── vite.config.js          # Vite config & API reverse proxy configuration
-│   ├── tailwind.config.js      # Tailwind CSS configuration
-│   ├── postcss.config.js       # PostCSS configuration
-│   ├── package.json            # Client dependencies
-│   ├── .env.example            # Example frontend environment variables
-│   └── .env                    # Local frontend environment variables
+│   │   ├── components/
+│   │   ├── pages/
+│   │   ├── services/
+│   │   ├── context/
+│   │   └── ...
+│   ├── package.json
+│   └── vite.config.js
 │
-├── server/                     # Backend API Application (Node.js + Express + Prisma)
+├── server/
+│   ├── src/
+│   │   ├── controllers/
+│   │   ├── middleware/
+│   │   ├── routes/
+│   │   ├── services/
+│   │   ├── prisma.js
+│   │   └── server.js
 │   ├── prisma/
-│   │   └── schema.prisma       # Prisma schema (PostgreSQL datasource)
-│   ├── src/
-│   │   ├── config/             # Environment & app configuration (env.js)
-│   │   ├── controllers/        # Route controllers (healthController.js)
-│   │   ├── middleware/         # Centralized error handler & 404 handler
-│   │   ├── routes/             # API routes (healthRoutes.js)
-│   │   ├── services/           # Business logic layer (reserved for Phase 2+)
-│   │   ├── utils/              # Utility functions (asyncHandler.js)
-│   │   ├── app.js              # Express app setup with middleware & routes
-│   │   └── server.js           # HTTP server listener & error process handlers
-│   ├── package.json            # Server dependencies
-│   ├── .env.example            # Example backend environment variables
-│   └── .env                    # Local backend environment variables
+│   │   └── schema.prisma
+│   └── package.json
 │
-├── .gitignore                  # Git ignore rules for dependencies & secrets
-└── README.md                   # Project documentation
+├── README.md
+└── .gitignore
 ```
 
----
+## Local Setup
 
-## ⚙️ Environment Variables Required
-
-### Server Environment (`server/.env`)
-
-Create `server/.env` based on `server/.env.example`:
-
-```env
-PORT=5000
-NODE_ENV=development
-CORS_ORIGIN=http://localhost:5173
-DATABASE_URL="postgresql://username:password@localhost:5432/servicehub_db?schema=public"
-```
-
-### Client Environment (`client/.env`)
-
-Create `client/.env` based on `client/.env.example`:
-
-```env
-VITE_API_BASE_URL=http://localhost:5000/api/v1
-```
-
-> ⚠️ **Important**: Secrets and `.env` files are excluded via `.gitignore` and must never be committed.
-
----
-
-## 🛠️ Installation & Setup
-
-### Prerequisites
-
-- **Node.js**: v18.x or higher
-- **npm**: v9.x or higher
-
-### Step 1: Install Server Dependencies
+### 1. Clone the repository
 
 ```bash
-cd server
+git clone https://github.com/garlapaticharanreddy0718-ui/ServiceHub0.git
+cd ServiceHub0
+```
+
+### 2. Install frontend dependencies
+
+```bash
+cd client
 npm install
 ```
 
-### Step 2: Install Client Dependencies
+### 3. Install backend dependencies
 
 ```bash
-cd ../client
+cd ../server
 npm install
 ```
 
----
+### 4. Configure environment variables
 
-## 🏃 Running the Application
+Create the required `.env` files for the frontend and backend.
 
-### 1. Start the Backend API Server
+Do not commit environment variables, API keys, database credentials, JWT secrets, or other sensitive information to GitHub.
 
-From the `server` directory:
+### 5. Generate Prisma Client
 
 ```bash
 cd server
-npm run dev
+npx prisma generate
 ```
 
-The Express API will start on **`http://localhost:5000`**.
+### 6. Apply database migrations
 
-### 2. Start the Frontend Application
+```bash
+npx prisma migrate deploy
+```
 
-From the `client` directory in a separate terminal:
+### 7. Start the backend
+
+```bash
+npm start
+```
+
+### 8. Start the frontend
+
+In another terminal:
 
 ```bash
 cd client
 npm run dev
 ```
 
-The Vite dev server will start on **`http://localhost:5173`**.
+The frontend can then be accessed through the Vite development server.
+
+## Environment Variables
+
+The exact values should be configured locally and in the deployment platforms.
+
+Typical configuration includes:
+
+### Frontend
+
+```env
+VITE_API_URL=your_backend_api_url
+```
+
+### Backend
+
+```env
+DATABASE_URL=your_postgresql_connection_string
+JWT_SECRET=your_jwt_secret
+```
+
+Never commit real production values to the repository.
+
+## Database
+
+ServiceHub uses **PostgreSQL** with **Prisma ORM**.
+
+The database schema contains entities supporting:
+
+- Users
+- Businesses
+- Business memberships
+- Services
+- Service categories
+- Staff
+- Staff schedules
+- Staff breaks
+- Staff time off
+- Customers
+- Customer notes
+- Bookings
+- Booking status history
+- Refresh tokens
+
+Database schema changes should be handled through Prisma migrations.
+
+## Production Deployment
+
+### Frontend
+
+The React frontend is deployed using Vercel.
+
+```text
+React/Vite
+     │
+     ▼
+   Vercel
+```
+
+### Backend
+
+The Express backend is deployed using Render.
+
+```text
+Node.js + Express
+        │
+        ▼
+      Render
+```
+
+### Database
+
+The production PostgreSQL database is hosted using Supabase.
+
+```text
+Prisma
+   │
+   ▼
+Supabase PostgreSQL
+```
+
+## Security
+
+ServiceHub follows several security practices:
+
+- JWT authentication
+- HttpOnly refresh-token cookies
+- bcrypt password hashing
+- Zod request validation
+- Protected API routes
+- Role-based authorization
+- Business-level data isolation
+- Server-side booking validation
+- Environment variables for secrets
+- Prisma ORM for database access
+
+## API Health Check
+
+The backend provides a health-check endpoint:
+
+```text
+GET /api/v1/health
+```
+
+This endpoint can be used to verify that the backend service is running.
+
+## Future Improvements
+
+Potential future improvements include:
+
+- Online payment integration
+- Email notifications
+- SMS notifications
+- Advanced analytics
+- Automated reminders
+- Recurring appointments
+- Business subscription plans
+- Customer self-service booking
+- Advanced reporting
+- Mobile application
+
+## Learning & Development
+
+This project demonstrates practical experience with:
+
+- Full-stack web development
+- REST API development
+- React application architecture
+- Authentication and authorization
+- JWT and refresh-token systems
+- RBAC
+- Multi-tenancy
+- PostgreSQL database design
+- Prisma ORM
+- API validation
+- Appointment scheduling
+- Production deployment
+- Cloud database management
+- Frontend/backend integration
+
+## Author
+
+**Charan Reddy Garlapati**
+
+B.Tech — Computer Science Engineering (AI/ML)
 
 ---
 
-## 🔍 How to Verify the Health Endpoint
-
-### 1. Direct API Verification via `curl` or Browser
-
-Execute the following request:
-
-```bash
-curl http://localhost:5000/api/v1/health
-```
-
-**Expected Response (`HTTP 200 OK`)**:
-
-```json
-{
-  "status": "ok",
-  "service": "servicehub-api"
-}
-```
-
-### 2. Frontend Status Page Verification
-
-Open **`http://localhost:5173`** in your browser.
-
-- If the backend is running, the page will display **Backend Connection Healthy** along with response latency and payload details.
-- If the backend is stopped, the page gracefully displays **Backend Unreachable** along with a **Refresh Status** retry button.
-
----
-
-## 🗄️ Prisma Setup Status
-
-Prisma ORM is initialized with PostgreSQL provider configuration in `server/prisma/schema.prisma`.
-
-To generate the Prisma Client or validate the schema in future phases:
-
-```bash
-cd server
-npx prisma validate
-npx prisma generate
-```
-
----
-
-## 📋 Phase 1 Scope Verification Checklist
-
-- [x] Project directory structure created
-- [x] React + Vite + Tailwind CSS frontend initialized
-- [x] Node.js + Express backend server initialized
-- [x] Prisma initialized for PostgreSQL (`DATABASE_URL`)
-- [x] Environment variable configuration separated (`.env.example` provided)
-- [x] Health endpoint `GET /api/v1/health` implemented and returning HTTP 200 JSON response
-- [x] Frontend status page displaying real-time API connectivity and graceful failure handling
-- [x] `.gitignore` rules active to prevent secret leaks
-- [x] Zero business models or future features implemented in Phase 1
+⭐ If you find this project useful, consider giving the repository a star.
