@@ -59,8 +59,8 @@ export default function Sidebar({
   ];
 
   return (
-    <aside className="w-full md:w-80 md:min-w-[320px] md:max-w-[320px] bg-[#0C2920] text-white border-r border-[#174336] shadow-xl flex-shrink-0 flex flex-col justify-between h-auto md:h-screen sticky top-0 overflow-y-auto select-none z-40">
-      <div className="p-5 space-y-6">
+    <aside className="w-full md:w-80 md:min-w-[320px] md:max-w-[320px] bg-[#0C2920] text-white border-r border-[#174336] shadow-xl flex-shrink-0 flex flex-col justify-between h-auto md:h-screen sticky top-0 overflow-y-auto scrollbar-none select-none z-40">
+      <div className="px-5 pt-4 pb-2 space-y-4">
         {/* Header: ServiceHub logo + Owner Portal badge */}
         <div className="flex items-center justify-between px-1">
           <div className="flex items-center space-x-2">
@@ -75,7 +75,7 @@ export default function Sidebar({
 
         {/* Business Card */}
         {selectedBusiness ? (
-          <div className="p-3.5 bg-[#13382D] border border-[#1E4E40] hover:border-[#2C6A58] rounded-2xl transition-all duration-200 space-y-1.5 shadow-xs">
+          <div className="p-3 bg-[#13382D] border border-[#1E4E40] hover:border-[#2C6A58] rounded-2xl transition-all duration-200 space-y-1 shadow-xs">
             <div className="flex items-center space-x-1.5 text-[10px] font-bold text-[#7EAAA0] uppercase tracking-wider truncate">
               <Building2 className="w-3.5 h-3.5 text-[#7EAAA0] flex-shrink-0" />
               <span className="truncate">
@@ -91,7 +91,7 @@ export default function Sidebar({
             </p>
           </div>
         ) : (
-          <div className="p-3.5 bg-[#13382D] border border-[#1E4E40] rounded-2xl space-y-2">
+          <div className="p-3 bg-[#13382D] border border-[#1E4E40] rounded-2xl space-y-1.5">
             <div className="flex items-center space-x-1.5 text-[10px] font-bold text-[#7EAAA0] uppercase tracking-wider">
               <Building2 className="w-3.5 h-3.5 text-[#7EAAA0]" />
               <span>TUITION AND TRAINING</span>
@@ -100,7 +100,7 @@ export default function Sidebar({
             <p className="text-xs text-[#8BB7AC]">📍 Mumbai</p>
             <button
               onClick={onNewBusiness}
-              className="w-full mt-2 py-2 px-3 bg-[#1B4D3E] hover:bg-[#225E4D] border border-[#2A6C58] text-white rounded-xl text-xs font-semibold flex items-center justify-between transition-colors cursor-pointer"
+              className="w-full mt-1.5 py-2 px-3 bg-[#1B4D3E] hover:bg-[#225E4D] border border-[#2A6C58] text-white rounded-xl text-xs font-semibold flex items-center justify-between transition-colors cursor-pointer"
             >
               <span>+ Create Business</span>
               <ChevronRight className="w-3.5 h-3.5 text-[#8BB7AC]" />
@@ -109,9 +109,9 @@ export default function Sidebar({
         )}
 
         {/* Navigation Sections */}
-        <nav className="space-y-6">
+        <nav className="space-y-3.5">
           {sections.map((section, idx) => (
-            <div key={idx} className="space-y-1.5">
+            <div key={idx} className="space-y-1">
               <div className="px-3 text-[10px] font-bold text-[#648D80] uppercase tracking-wider">
                 {section.title}
               </div>
@@ -124,16 +124,14 @@ export default function Sidebar({
                     <button
                       key={item.id}
                       onClick={() => setActiveTab(item.id)}
-                      className={`group w-full flex items-center space-x-3 px-3 py-2.5 rounded-xl text-xs sm:text-[13px] transition-all duration-150 cursor-pointer ${
-                        isActive
+                      className={`group w-full flex items-center space-x-3 px-3 py-1.5 rounded-xl text-xs sm:text-[13px] transition-all duration-150 cursor-pointer ${isActive
                           ? 'bg-[#184F3F] text-white font-semibold shadow-xs'
                           : 'text-[#B2D0C6] hover:bg-[#13382D] hover:text-white font-medium'
-                      }`}
+                        }`}
                     >
                       <Icon
-                        className={`w-4 h-4 flex-shrink-0 transition-colors ${
-                          isActive ? 'text-white' : 'text-[#8BAEA3] group-hover:text-white'
-                        }`}
+                        className={`w-4 h-4 flex-shrink-0 transition-colors ${isActive ? 'text-white' : 'text-[#8BAEA3] group-hover:text-white'
+                          }`}
                       />
                       <span className="truncate">{item.label}</span>
                     </button>
@@ -146,10 +144,10 @@ export default function Sidebar({
       </div>
 
       {/* Bottom Area: Divider + Logout */}
-      <div className="p-5 pt-3 border-t border-[#174336] bg-[#0C2920]">
+      <div className="px-5 py-2.5 border-t border-[#174336] bg-[#0C2920]">
         <button
           onClick={onLogout}
-          className="group w-full flex items-center space-x-3 px-3 py-2.5 rounded-xl text-xs sm:text-[13px] font-medium text-[#B2D0C6] hover:bg-[#13382D] hover:text-rose-300 transition-colors cursor-pointer"
+          className="group w-full flex items-center space-x-3 px-3 py-2 rounded-xl text-xs sm:text-[13px] font-medium text-[#B2D0C6] hover:bg-[#13382D] hover:text-rose-300 transition-colors cursor-pointer"
         >
           <LogOut className="w-4 h-4 text-[#8BAEA3] group-hover:text-rose-300 transition-colors flex-shrink-0" />
           <span>Logout</span>
