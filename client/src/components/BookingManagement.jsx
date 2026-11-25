@@ -6,24 +6,22 @@ import {
   User,
   Users,
   Scissors,
-  Plus,
   AlertCircle,
   CheckCircle2,
   X,
   RefreshCw,
   History,
-  Check,
   Play,
-  XCircle,
+  Search,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
-import PageHeader from './ui/PageHeader';
 import Button from './ui/Button';
 import Badge from './ui/Badge';
 import Drawer from './ui/Drawer';
 import Modal from './ui/Modal';
 import Input from './ui/Input';
 import Select from './ui/Select';
-import EmptyState from './ui/EmptyState';
 import LoadingState from './ui/LoadingState';
 import AppointmentDetailsModal from './AppointmentDetailsModal';
 import { formatLocalDateISO, toLocalISOStringWithOffset } from '../utils/dateUtils';
@@ -340,52 +338,118 @@ export default function BookingManagement({ selectedBusiness, currentUser }) {
   };
 
   const selectedServiceObj = services.find((s) => s.id === createForm.serviceId);
+  const hasActiveFilters = Boolean(statusFilter || staffFilter || serviceFilter || dateFilter || searchQuery);
+  const isTodaySelected = dateFilter === getTodayDateString();
+
+  const handleClearFilters = () => {
+    setStatusFilter('');
+    setStaffFilter('');
+    setServiceFilter('');
+    setDateFilter('');
+    setSearchQuery('');
+  };
 
   return (
-    <div className="space-y-6 text-[#173F35] font-sans pb-12">
-      <PageHeader
-        title="Appointments"
-        subtitle="Manage your business bookings, schedules, and appointment status."
-        actions={
-          <>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => fetchBookings(pagination.page)}
-              icon={RefreshCw}
-              title="Refresh"
-            >
-              Refresh
-            </Button>
-            <Button size="sm" onClick={handleOpenCreateModal} icon={Plus}>
-              + New Booking
-            </Button>
-          </>
-        }
-      />
-
-      {/* Appointment Summary Stats */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-white border border-[#D5E4DC] rounded-2xl p-4 shadow-2xs space-y-1">
-          <span className="text-[11px] font-bold text-[#61766F] uppercase tracking-wider">
-            {dateFilter === getTodayDateString() ? "Today's Appointments" : "Selected Date Appointments"}
-          </span>
-          <div className="text-2xl font-black text-[#173F35] font-heading">{todaysCount}</div>
+    <div className="space-y-5 text-[#102C26] font-sans pb-10">
+      {/* Page Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-5 border-b border-[#D5E4DC]">
+        <div>
+          <h1 className="text-2xl font-extrabold text-[#102C26] tracking-tight font-heading">
+            Appointments
+          </h1>
+          <p className="mt-1 text-xs sm:text-sm text-[#587068]">
+            Manage your business bookings, schedules, and appointment status.
+          </p>
         </div>
 
-        <div className="bg-white border border-[#D5E4DC] rounded-2xl p-4 shadow-2xs space-y-1">
-          <span className="text-[11px] font-bold text-amber-700 uppercase tracking-wider">Pending Confirmation</span>
-          <div className="text-2xl font-black text-amber-800 font-heading">{pendingCount}</div>
+        <div className="flex items-center gap-2.5 self-start sm:self-auto flex-shrink-0">
+          <button
+            type="button"
+            onClick={() => fetchBookings(pagination.page)}
+            title="Refresh appointments"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold text-[#173F35] bg-white border border-[#D5E4DC] hover:bg-[#F3F8F5] transition-colors cursor-pointer shadow-2xs"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 text-[#587068] ${loading ? 'animate-spin' : ''}`} />
+            <span>Refresh</span>
+          </button>
+          <button
+            type="button"
+            onClick={handleOpenCreateModal}
+            className="inline-flex items-center justify-center px-4 py-2 rounded-xl text-xs sm:text-[13px] font-semibold text-white bg-[#173F35] hover:bg-[#102D26] transition-colors cursor-pointer shadow-2xs"
+          >
+            + New Booking
+          </button>
+        </div>
+      </div>
+
+      {/* Appointment Summary Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="bg-white border border-[#D5E4DC] rounded-2xl p-4 sm:p-5 shadow-[0_1px_3px_rgba(16,44,38,0.04)] flex items-start justify-between gap-3">
+          <div className="space-y-1.5 min-w-0">
+            <p className="text-xs font-semibold text-[#587068] truncate">
+              {isTodaySelected ? "Today's Appointments" : 'Selected Date Appointments'}
+            </p>
+            <p className="text-2xl sm:text-[28px] font-extrabold text-[#102C26] font-heading tracking-tight tabular-nums leading-none">
+              {todaysCount}
+            </p>
+            <p className="text-[11px] text-[#6D837C] font-medium truncate">
+              {formatDisplayDate(dateFilter)}
+            </p>
+          </div>
+          <div className="w-9 h-9 rounded-xl bg-[#EEF5F1] border border-[#DCE8E1] text-[#173F35] flex items-center justify-center flex-shrink-0">
+            <Calendar className="w-4 h-4" />
+          </div>
         </div>
 
-        <div className="bg-white border border-[#D5E4DC] rounded-2xl p-4 shadow-2xs space-y-1">
-          <span className="text-[11px] font-bold text-blue-700 uppercase tracking-wider">Upcoming & Active</span>
-          <div className="text-2xl font-black text-blue-900 font-heading">{upcomingCount}</div>
+        <div className="bg-white border border-[#D5E4DC] rounded-2xl p-4 sm:p-5 shadow-[0_1px_3px_rgba(16,44,38,0.04)] flex items-start justify-between gap-3">
+          <div className="space-y-1.5 min-w-0">
+            <p className="text-xs font-semibold text-[#587068] truncate">
+              Pending Confirmation
+            </p>
+            <p className="text-2xl sm:text-[28px] font-extrabold text-amber-700 font-heading tracking-tight tabular-nums leading-none">
+              {pendingCount}
+            </p>
+            <p className="text-[11px] text-[#6D837C] font-medium truncate">
+              Awaiting confirmation
+            </p>
+          </div>
+          <div className="w-9 h-9 rounded-xl bg-amber-50 border border-amber-200/70 text-amber-700 flex items-center justify-center flex-shrink-0">
+            <Clock className="w-4 h-4" />
+          </div>
         </div>
 
-        <div className="bg-white border border-[#D5E4DC] rounded-2xl p-4 shadow-2xs space-y-1">
-          <span className="text-[11px] font-bold text-emerald-700 uppercase tracking-wider">Completed</span>
-          <div className="text-2xl font-black text-emerald-800 font-heading">{completedCount}</div>
+        <div className="bg-white border border-[#D5E4DC] rounded-2xl p-4 sm:p-5 shadow-[0_1px_3px_rgba(16,44,38,0.04)] flex items-start justify-between gap-3">
+          <div className="space-y-1.5 min-w-0">
+            <p className="text-xs font-semibold text-[#587068] truncate">
+              Upcoming &amp; Active
+            </p>
+            <p className="text-2xl sm:text-[28px] font-extrabold text-sky-800 font-heading tracking-tight tabular-nums leading-none">
+              {upcomingCount}
+            </p>
+            <p className="text-[11px] text-[#6D837C] font-medium truncate">
+              Confirmed or in progress
+            </p>
+          </div>
+          <div className="w-9 h-9 rounded-xl bg-sky-50 border border-sky-200/70 text-sky-700 flex items-center justify-center flex-shrink-0">
+            <Play className="w-4 h-4" />
+          </div>
+        </div>
+
+        <div className="bg-white border border-[#D5E4DC] rounded-2xl p-4 sm:p-5 shadow-[0_1px_3px_rgba(16,44,38,0.04)] flex items-start justify-between gap-3">
+          <div className="space-y-1.5 min-w-0">
+            <p className="text-xs font-semibold text-[#587068] truncate">
+              Completed
+            </p>
+            <p className="text-2xl sm:text-[28px] font-extrabold text-emerald-700 font-heading tracking-tight tabular-nums leading-none">
+              {completedCount}
+            </p>
+            <p className="text-[11px] text-[#6D837C] font-medium truncate">
+              Finished appointments
+            </p>
+          </div>
+          <div className="w-9 h-9 rounded-xl bg-emerald-50 border border-emerald-200/70 text-emerald-700 flex items-center justify-center flex-shrink-0">
+            <CheckCircle2 className="w-4 h-4" />
+          </div>
         </div>
       </div>
 
@@ -403,46 +467,67 @@ export default function BookingManagement({ selectedBusiness, currentUser }) {
         </div>
       )}
 
-      {/* Date Navigation & Filter Toolbar */}
-      <div className="bg-white rounded-2xl border border-[#D5E4DC] shadow-2xs p-4 space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-[#E6EFEA]">
-          {/* Search bar */}
-          <div className="relative flex-1 min-w-[220px]">
+      {/* Compact Appointment Toolbar */}
+      <div className="bg-white rounded-2xl border border-[#D5E4DC] shadow-[0_1px_3px_rgba(16,44,38,0.04)] p-4 space-y-3">
+        {/* Top Row: Search on left, Date Navigation on right */}
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pb-3 border-b border-[#E6EFEA]">
+          <div className="relative flex-1 w-full lg:max-w-md">
+            <Search className="w-4 h-4 text-[#6D837C] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input
               type="text"
               placeholder="Search by customer name, phone, or service..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-3.5 pr-3 py-1.5 bg-[#F7FAFA] border border-[#D5E4DC] rounded-xl text-xs text-[#173F35] focus:outline-none focus:ring-2 focus:ring-[#123A32]"
+              className="w-full pl-9 pr-8 py-2 bg-[#F8FBFA] border border-[#D5E4DC] rounded-xl text-xs text-[#102C26] placeholder-[#7B918A] focus:outline-none focus:ring-2 focus:ring-[#173F35]/20 focus:border-[#173F35] transition-colors"
             />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                aria-label="Clear search"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 text-[#6D837C] hover:text-[#102C26] rounded cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
 
-          {/* Date Navigation */}
-          <div className="flex items-center space-x-1.5 bg-[#EEF6F1] border border-[#D5E4DC] rounded-xl px-2.5 py-1">
+          {/* Date Navigation Controls */}
+          <div className="flex flex-wrap items-center gap-1.5 bg-[#F4F8F6] border border-[#D5E4DC] rounded-xl p-1 self-start lg:self-auto">
             <button
+              type="button"
               onClick={handlePrevDay}
-              className="px-2 py-1 text-xs font-bold text-[#123A32] hover:bg-[#CBDCD3] rounded-lg transition-colors cursor-pointer"
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-[#173F35] hover:bg-white rounded-lg transition-colors cursor-pointer"
             >
-              ◀ Prev
+              <ChevronLeft className="w-3.5 h-3.5" />
+              <span>Previous</span>
             </button>
             <button
+              type="button"
               onClick={handleTodayDate}
-              className="px-2.5 py-1 text-xs font-extrabold text-[#123A32] bg-white border border-[#D5E4DC] rounded-lg shadow-2xs cursor-pointer"
+              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
+                isTodaySelected
+                  ? 'bg-[#173F35] text-white shadow-2xs'
+                  : 'bg-white text-[#173F35] border border-[#D5E4DC] hover:bg-[#EEF5F1]'
+              }`}
             >
               Today
             </button>
             <button
+              type="button"
               onClick={handleNextDay}
-              className="px-2 py-1 text-xs font-bold text-[#123A32] hover:bg-[#CBDCD3] rounded-lg transition-colors cursor-pointer"
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-[#173F35] hover:bg-white rounded-lg transition-colors cursor-pointer"
             >
-              Next ▶
+              <span>Next</span>
+              <ChevronRight className="w-3.5 h-3.5" />
             </button>
 
-            {/* Clear Selected Date Display: e.g. "07 Sep 2026" */}
-            <div className="relative flex items-center bg-white border border-[#D5E4DC] px-2.5 py-1 rounded-lg text-xs font-extrabold text-[#173F35] shadow-2xs cursor-pointer">
-              <span>📅 {formatDisplayDate(dateFilter)}</span>
+            <div className="relative inline-flex items-center gap-1.5 bg-white border border-[#D5E4DC] hover:border-[#AEC5B8] px-3 py-1.5 rounded-lg text-xs font-semibold text-[#102C26] shadow-2xs transition-colors cursor-pointer">
+              <Calendar className="w-3.5 h-3.5 text-[#587068]" />
+              <span>{formatDisplayDate(dateFilter)}</span>
               <input
                 type="date"
+                aria-label="Select appointment date"
                 value={dateFilter}
                 onChange={(e) => setDateFilter(e.target.value)}
                 className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
@@ -451,33 +536,39 @@ export default function BookingManagement({ selectedBusiness, currentUser }) {
           </div>
         </div>
 
-        {/* Dropdown Filters */}
-        <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex items-center space-x-1.5">
-              <span className="font-bold text-[#61766F]">Status:</span>
+        {/* Second Row: Status, Staff, Service Dropdowns + Clear Filters */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 lg:flex lg:flex-wrap items-center gap-2.5 w-full sm:w-auto">
+            <div className="flex items-center gap-2">
+              <label htmlFor="appt-status-filter" className="text-xs font-semibold text-[#587068] whitespace-nowrap">
+                Status
+              </label>
               <select
+                id="appt-status-filter"
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value)}
-                className="px-3 py-1.5 bg-white border border-[#D5E4DC] rounded-xl text-xs font-bold text-[#173F35] cursor-pointer focus:ring-2 focus:ring-[#123A32]"
+                className="w-full sm:w-auto px-3 py-1.5 bg-[#F8FBFA] border border-[#D5E4DC] rounded-xl text-xs font-semibold text-[#102C26] cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#173F35]/20 focus:border-[#173F35]"
               >
                 <option value="">All Statuses</option>
-                <option value="PENDING">PENDING</option>
-                <option value="CONFIRMED">CONFIRMED</option>
-                <option value="IN_PROGRESS">IN_PROGRESS</option>
-                <option value="COMPLETED">COMPLETED</option>
-                <option value="CANCELLED">CANCELLED</option>
-                <option value="NO_SHOW">NO_SHOW</option>
+                <option value="PENDING">Pending</option>
+                <option value="CONFIRMED">Confirmed</option>
+                <option value="IN_PROGRESS">In Progress</option>
+                <option value="COMPLETED">Completed</option>
+                <option value="CANCELLED">Cancelled</option>
+                <option value="NO_SHOW">No Show</option>
               </select>
             </div>
 
             {role !== 'STAFF' && (
-              <div className="flex items-center space-x-1.5">
-                <span className="font-bold text-[#61766F]">Staff:</span>
+              <div className="flex items-center gap-2">
+                <label htmlFor="appt-staff-filter" className="text-xs font-semibold text-[#587068] whitespace-nowrap">
+                  Staff
+                </label>
                 <select
+                  id="appt-staff-filter"
                   value={staffFilter}
                   onChange={(e) => setStaffFilter(e.target.value)}
-                  className="px-3 py-1.5 bg-white border border-[#D5E4DC] rounded-xl text-xs font-bold text-[#173F35] cursor-pointer focus:ring-2 focus:ring-[#123A32]"
+                  className="w-full sm:w-auto px-3 py-1.5 bg-[#F8FBFA] border border-[#D5E4DC] rounded-xl text-xs font-semibold text-[#102C26] cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#173F35]/20 focus:border-[#173F35]"
                 >
                   <option value="">All Staff</option>
                   {staffList.map((s) => (
@@ -489,12 +580,15 @@ export default function BookingManagement({ selectedBusiness, currentUser }) {
               </div>
             )}
 
-            <div className="flex items-center space-x-1.5">
-              <span className="font-bold text-[#61766F]">Service:</span>
+            <div className="flex items-center gap-2">
+              <label htmlFor="appt-service-filter" className="text-xs font-semibold text-[#587068] whitespace-nowrap">
+                Service
+              </label>
               <select
+                id="appt-service-filter"
                 value={serviceFilter}
                 onChange={(e) => setServiceFilter(e.target.value)}
-                className="px-3 py-1.5 bg-white border border-[#D5E4DC] rounded-xl text-xs font-bold text-[#173F35] cursor-pointer focus:ring-2 focus:ring-[#123A32]"
+                className="w-full sm:w-auto px-3 py-1.5 bg-[#F8FBFA] border border-[#D5E4DC] rounded-xl text-xs font-semibold text-[#102C26] cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#173F35]/20 focus:border-[#173F35]"
               >
                 <option value="">All Services</option>
                 {services.map((svc) => (
@@ -506,52 +600,65 @@ export default function BookingManagement({ selectedBusiness, currentUser }) {
             </div>
           </div>
 
-          {(statusFilter || staffFilter || serviceFilter || dateFilter || searchQuery) && (
+          {hasActiveFilters && (
             <button
-              onClick={() => {
-                setStatusFilter('');
-                setStaffFilter('');
-                setServiceFilter('');
-                setDateFilter('');
-                setSearchQuery('');
-              }}
-              className="text-xs font-extrabold text-[#123A32] underline hover:text-emerald-800 cursor-pointer"
+              type="button"
+              onClick={handleClearFilters}
+              className="inline-flex items-center gap-1 self-start sm:self-auto px-2.5 py-1.5 text-xs font-semibold text-[#587068] hover:text-[#102C26] hover:bg-[#F4F8F6] rounded-lg transition-colors cursor-pointer"
             >
-              Clear Filters
+              <X className="w-3.5 h-3.5" />
+              <span>Clear Filters</span>
             </button>
           )}
         </div>
       </div>
 
-      {/* Bookings Table */}
-      <div className="bg-white rounded-2xl border border-[#D5E4DC] shadow-2xs overflow-hidden">
+      {/* Bookings Table / Compact Empty State */}
+      <div className="bg-white rounded-2xl border border-[#D5E4DC] shadow-[0_1px_3px_rgba(16,44,38,0.04)] overflow-hidden">
         {loading ? (
           <LoadingState message="Loading appointments..." />
         ) : filteredBookings.length === 0 ? (
-          <EmptyState
-            icon={Calendar}
-            title="No appointments found"
-            description={
-              statusFilter || staffFilter || dateFilter || searchQuery
-                ? 'No bookings match your current filter parameters.'
-                : 'Create your first appointment.'
-            }
-            actionLabel="New Booking"
-            actionIcon={Plus}
-            onAction={handleOpenCreateModal}
-          />
+          <div className="py-10 px-6 text-center flex flex-col items-center justify-center">
+            <div className="w-11 h-11 rounded-2xl bg-[#EEF5F1] border border-[#DCE8E1] text-[#173F35] flex items-center justify-center mb-3">
+              <Calendar className="w-5 h-5" />
+            </div>
+            <h3 className="text-sm font-bold text-[#102C26] font-heading">
+              No appointments found
+            </h3>
+            <p className="mt-1 text-xs text-[#587068] max-w-sm">
+              There are no appointments matching your current filters.
+            </p>
+            <div className="mt-4 flex flex-wrap items-center justify-center gap-2.5">
+              <button
+                type="button"
+                onClick={handleOpenCreateModal}
+                className="inline-flex items-center justify-center px-4 py-2 rounded-xl text-xs font-semibold text-white bg-[#173F35] hover:bg-[#102D26] transition-colors cursor-pointer shadow-2xs"
+              >
+                + Create Booking
+              </button>
+              {hasActiveFilters && (
+                <button
+                  type="button"
+                  onClick={handleClearFilters}
+                  className="inline-flex items-center justify-center px-3.5 py-2 rounded-xl text-xs font-semibold text-[#173F35] bg-white border border-[#D5E4DC] hover:bg-[#F4F8F6] transition-colors cursor-pointer"
+                >
+                  Clear Filters
+                </button>
+              )}
+            </div>
+          </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
-                <tr className="bg-[#EEF6F1] border-b border-[#D5E4DC] text-[11px] font-black text-[#123A32] uppercase tracking-wider">
-                  <th className="py-3 px-6">Time & Date</th>
+                <tr className="bg-[#F4F8F6] border-b border-[#D5E4DC] text-[11px] font-bold text-[#526962] uppercase tracking-wider">
+                  <th className="py-3 px-6">Time &amp; Date</th>
                   <th className="py-3 px-6">Customer</th>
                   <th className="py-3 px-6">Service</th>
                   <th className="py-3 px-6">Staff</th>
                   <th className="py-3 px-6">Amount</th>
                   <th className="py-3 px-6">Status</th>
-                  <th className="py-3 px-6 text-right">Status-Aware Actions</th>
+                  <th className="py-3 px-6 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#E6EFEA] text-xs font-sans">
