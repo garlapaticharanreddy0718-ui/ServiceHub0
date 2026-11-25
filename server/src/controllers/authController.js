@@ -11,13 +11,27 @@ const {
 } = require('../services/authService');
 
 // Cookie options for HttpOnly Refresh Token
-const getCookieOptions = () => ({
-  httpOnly: true,
-  secure: config.nodeEnv === 'production',
-  sameSite: 'lax',
-  path: '/api/v1/auth',
-  maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-});
+// Cross-origin deployments (e.g., Vercel frontend -> Render backend) require SameSite=None + Secure in production.
+const getCookieOptions = () => {
+  const isProduction = config.nodeEnv === 'production';
+  return {
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: isProduction ? 'none' : 'lax',
+    path: '/api/v1/auth',
+    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+  };
+};
+
+const getClearCookieOptions = () => {
+  const isProduction = config.nodeEnv === 'production';
+  return {
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: isProduction ? 'none' : 'lax',
+    path: '/api/v1/auth',
+  };
+};
 
 const isValidationError = (err) => {
   return err.name === 'ZodError' || (err.issues && Array.isArray(err.issues)) || (err.errors && Array.isArray(err.errors));
@@ -109,12 +123,7 @@ const refresh = asyncHandler(async (req, res) => {
       },
     });
   } catch (err) {
-    res.clearCookie('refreshToken', {
-      httpOnly: true,
-      secure: config.nodeEnv === 'production',
-      sameSite: 'lax',
-      path: '/api/v1/auth',
-    });
+    res.clearCookie('refreshToken', getClearCookieOptions());
 
     return res.status(err.statusCode || 401).json({
       status: 'fail',
@@ -131,12 +140,7 @@ const logout = asyncHandler(async (req, res) => {
 
   await logoutUser(rawRefreshToken);
 
-  res.clearCookie('refreshToken', {
-    httpOnly: true,
-    secure: config.nodeEnv === 'production',
-    sameSite: 'lax',
-    path: '/api/v1/auth',
-  });
+  res.clearCookie('refreshToken', getClearCookieOptions());
 
   res.status(200).json({
     status: 'success',

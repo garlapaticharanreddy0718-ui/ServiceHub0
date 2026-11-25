@@ -17,6 +17,9 @@ const { notFoundHandler, errorHandler } = require('./middleware/errorHandler');
 
 const app = express();
 
+// Trust reverse proxy (Render) so secure cookies and protocol headers work properly
+app.set('trust proxy', 1);
+
 // Middlewares
 const localOriginRegex = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
 
@@ -25,8 +28,10 @@ app.use(cors({
     if (!origin || localOriginRegex.test(origin)) {
       return callback(null, true);
     }
-    const configuredOrigins = config.corsOrigin ? config.corsOrigin.split(',').map((o) => o.trim()) : [];
-    if (configuredOrigins.includes(origin)) {
+    const configuredOrigins = config.corsOrigin
+      ? config.corsOrigin.split(',').map((o) => o.trim().replace(/\/+$/, ''))
+      : [];
+    if (configuredOrigins.includes(origin.replace(/\/+$/, ''))) {
       return callback(null, true);
     }
     return callback(null, false);
