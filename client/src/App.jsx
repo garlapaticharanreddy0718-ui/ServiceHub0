@@ -22,7 +22,7 @@ import BusinessSettings from './components/BusinessSettings';
 import BusinessSetupModal from './components/BusinessSetupModal';
 import ChangePasswordForm from './components/ChangePasswordForm';
 import LoadingState from './components/ui/LoadingState';
-import { apiRequest, setAccessToken } from './services/api';
+import { apiRequest, getAccessToken, refreshAccessToken, setAccessToken } from './services/api';
 import {
   getTabFromPath,
   getPathFromTab,
@@ -31,6 +31,10 @@ import {
   VALID_OWNER_TABS,
   VALID_STAFF_TABS,
 } from './utils/routing';
+
+// Coalesce initial session restoration across React.StrictMode double-mounts
+// so single-use refresh token rotation is never triggered twice on refresh.
+let activeRestorePromise = null;
 
 export default function App() {
   const [activeTab, setActiveTabState] = useState(() => getTabFromPath(window.location.pathname) || 'landing');
@@ -109,104 +113,142 @@ export default function App() {
 
   // Silent session restore on initial page load
   useEffect(() => {
-    async function restoreSession() {
-      const urlTab = getTabFromPath(window.location.pathname);
+    let isMounted = true;
+    const urlTab = getTabFromPath(window.location.pathname);
 
+    async function performSessionRestore() {
+      const token = getAccessToken() || (await refreshAccessToken());
+      if (!token) {
+        return { authenticated: false };
+      }
+
+      const meResponse = await apiRequest('/auth/me', { method: 'GET' });
+      if (!meResponse.ok) {
+        return { authenticated: false };
+      }
+
+      const meData = await meResponse.json();
+      const user = meData?.data?.user;
+      if (!user) {
+        return { authenticated: false };
+      }
+
+      let bizList = [];
       try {
+        const bizResponse = await apiRequest('/businesses', { method: 'GET' });
+        if (bizResponse.ok) {
+          const bizData = await bizResponse.json();
+          bizList = bizData.data || [];
+        }
+      } catch (err) {
+        console.error('Failed to fetch user businesses:', err);
+      }
+
+      return { authenticated: true, user, bizList };
+    }
+
+    if (!activeRestorePromise) {
+      activeRestorePromise = performSessionRestore().finally(() => {
+        activeRestorePromise = null;
+      });
+    }
+
+    activeRestorePromise
+      .then((result) => {
+        if (!isMounted) return;
+
+        if (!result?.authenticated) {
+          setActiveTabState(urlTab || 'landing');
+          return;
+        }
+
+        const { user, bizList } = result;
+        setBusinesses(bizList);
+        if (bizList.length > 0) {
+          const savedBizId = sessionStorage.getItem('servicehub_selected_business_id');
+          const matchedBiz = savedBizId ? bizList.find((b) => b.id === savedBizId) : null;
+          setSelectedBusiness(matchedBiz || bizList[0]);
+        }
+
         const savedRole = sessionStorage.getItem('servicehub_active_role');
         const savedTab = sessionStorage.getItem('servicehub_active_tab');
 
-        const refreshResponse = await apiRequest('/auth/refresh', { method: 'POST' });
-        if (refreshResponse.ok) {
-          const refreshData = await refreshResponse.json();
-          setAccessToken(refreshData.data.accessToken);
+        const hasOwnerRole = bizList.some((b) => b.currentUserRole === 'OWNER' || b.currentUserRole === 'ADMIN');
+        const hasStaffRole = bizList.some((b) => b.currentUserRole === 'STAFF');
+        const isPublicEntryUrl = !urlTab || ['landing', 'login', 'register'].includes(urlTab);
 
-          const meResponse = await apiRequest('/auth/me', { method: 'GET' });
-          if (meResponse.ok) {
-            const meData = await meResponse.json();
-            const user = meData.data.user;
-
-            const userBizs = await fetchUserBusinesses();
-
-            // Determine actual backend roles from user business memberships
-            const hasOwnerRole = userBizs.some((b) => b.currentUserRole === 'OWNER' || b.currentUserRole === 'ADMIN');
-            const hasStaffRole = userBizs.some((b) => b.currentUserRole === 'STAFF');
-
-            const isPublicEntryUrl = !urlTab || ['landing', 'login', 'register'].includes(urlTab);
-
-            if (hasOwnerRole) {
-              if (urlTab && VALID_CUSTOMER_TABS.includes(urlTab) && urlTab !== 'account') {
-                setActiveRole('customer');
-                setActiveTab(urlTab, { replace: true });
-              } else if (urlTab === 'staff-dashboard' && hasStaffRole) {
-                setActiveRole('staff');
-                setActiveTab('staff-dashboard', { replace: true });
-              } else if (urlTab && VALID_OWNER_TABS.includes(urlTab)) {
-                const resolvedOwnerTab = (userBizs.length > 0 && urlTab === 'onboarding') ? 'dashboard' : urlTab;
-                setActiveRole('owner');
-                setActiveTab(resolvedOwnerTab, { replace: true });
-              } else if (isPublicEntryUrl) {
-                if (savedRole === 'customer' && savedTab && VALID_CUSTOMER_TABS.includes(savedTab)) {
-                  setActiveRole('customer');
-                  setActiveTab(savedTab, { replace: true });
-                } else if (savedRole === 'staff' && hasStaffRole) {
-                  setActiveRole('staff');
-                  setActiveTab(savedTab && VALID_STAFF_TABS.includes(savedTab) ? savedTab : 'staff-dashboard', { replace: true });
-                } else {
-                  let resolvedOwnerTab = savedTab && VALID_OWNER_TABS.includes(savedTab) ? savedTab : 'dashboard';
-                  if (userBizs.length > 0 && resolvedOwnerTab === 'onboarding') {
-                    resolvedOwnerTab = 'dashboard';
-                  }
-                  setActiveRole('owner');
-                  setActiveTab(resolvedOwnerTab, { replace: true });
-                }
-              } else {
-                setActiveRole('owner');
-                setActiveTab('dashboard', { replace: true });
-              }
-            } else if (hasStaffRole) {
-              if (urlTab && VALID_CUSTOMER_TABS.includes(urlTab) && urlTab !== 'account') {
-                setActiveRole('customer');
-                setActiveTab(urlTab, { replace: true });
-              } else if (urlTab && VALID_STAFF_TABS.includes(urlTab)) {
-                setActiveRole('staff');
-                setActiveTab(urlTab, { replace: true });
-              } else if (savedRole === 'customer' && savedTab && VALID_CUSTOMER_TABS.includes(savedTab)) {
-                setActiveRole('customer');
-                setActiveTab(savedTab, { replace: true });
-              } else {
-                setActiveRole('staff');
-                setActiveTab(savedTab && VALID_STAFF_TABS.includes(savedTab) ? savedTab : 'staff-dashboard', { replace: true });
-              }
-            } else {
-              // Pure Customer (No business staff/owner memberships)
+        if (hasOwnerRole) {
+          if (urlTab && VALID_CUSTOMER_TABS.includes(urlTab) && urlTab !== 'account') {
+            setActiveRole('customer');
+            setActiveTab(urlTab, { replace: true });
+          } else if (urlTab === 'staff-dashboard' && hasStaffRole) {
+            setActiveRole('staff');
+            setActiveTab('staff-dashboard', { replace: true });
+          } else if (urlTab && VALID_OWNER_TABS.includes(urlTab)) {
+            const resolvedOwnerTab = bizList.length > 0 && urlTab === 'onboarding' ? 'dashboard' : urlTab;
+            setActiveRole('owner');
+            setActiveTab(resolvedOwnerTab, { replace: true });
+          } else if (isPublicEntryUrl) {
+            if (savedRole === 'customer' && savedTab && VALID_CUSTOMER_TABS.includes(savedTab)) {
               setActiveRole('customer');
-              const targetCustomerTab =
-                urlTab && VALID_CUSTOMER_TABS.includes(urlTab)
-                  ? urlTab
-                  : savedTab && VALID_CUSTOMER_TABS.includes(savedTab)
-                  ? savedTab
-                  : 'customer-portal';
-              setActiveTab(targetCustomerTab, { replace: true });
+              setActiveTab(savedTab, { replace: true });
+            } else if (savedRole === 'staff' && hasStaffRole) {
+              setActiveRole('staff');
+              setActiveTab(savedTab && VALID_STAFF_TABS.includes(savedTab) ? savedTab : 'staff-dashboard', { replace: true });
+            } else {
+              let resolvedOwnerTab = savedTab && VALID_OWNER_TABS.includes(savedTab) ? savedTab : 'dashboard';
+              if (bizList.length > 0 && resolvedOwnerTab === 'onboarding') {
+                resolvedOwnerTab = 'dashboard';
+              }
+              setActiveRole('owner');
+              setActiveTab(resolvedOwnerTab, { replace: true });
             }
-
-            setCurrentUser(user);
-            return;
+          } else {
+            setActiveRole('owner');
+            setActiveTab('dashboard', { replace: true });
           }
+        } else if (hasStaffRole) {
+          if (urlTab && VALID_CUSTOMER_TABS.includes(urlTab) && urlTab !== 'account') {
+            setActiveRole('customer');
+            setActiveTab(urlTab, { replace: true });
+          } else if (urlTab && VALID_STAFF_TABS.includes(urlTab)) {
+            setActiveRole('staff');
+            setActiveTab(urlTab, { replace: true });
+          } else if (savedRole === 'customer' && savedTab && VALID_CUSTOMER_TABS.includes(savedTab)) {
+            setActiveRole('customer');
+            setActiveTab(savedTab, { replace: true });
+          } else {
+            setActiveRole('staff');
+            setActiveTab(savedTab && VALID_STAFF_TABS.includes(savedTab) ? savedTab : 'staff-dashboard', { replace: true });
+          }
+        } else {
+          // Pure Customer (No business staff/owner memberships)
+          setActiveRole('customer');
+          const targetCustomerTab =
+            urlTab && VALID_CUSTOMER_TABS.includes(urlTab)
+              ? urlTab
+              : savedTab && VALID_CUSTOMER_TABS.includes(savedTab)
+              ? savedTab
+              : 'customer-portal';
+          setActiveTab(targetCustomerTab, { replace: true });
         }
 
-        // Not authenticated: keep requested URL tab (protected views render LoginForm without losing URL)
+        setCurrentUser(user);
+      })
+      .catch(() => {
+        if (!isMounted) return;
         setActiveTabState(urlTab || 'landing');
-      } catch (err) {
-        // No active session -> stay on public/requested URL without overwriting path
-        setActiveTabState(urlTab || 'landing');
-      } finally {
-        setInitializing(false);
-      }
-    }
+      })
+      .finally(() => {
+        if (isMounted) {
+          setInitializing(false);
+        }
+      });
 
-    restoreSession();
-  }, [fetchUserBusinesses, setActiveTab]);
+    return () => {
+      isMounted = false;
+    };
+  }, [setActiveTab]);
 
   const handleLoginSuccess = async (user, selectedRole) => {
     setLoginRoleError(null);
