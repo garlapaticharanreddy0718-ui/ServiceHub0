@@ -23,9 +23,17 @@ import BusinessSetupModal from './components/BusinessSetupModal';
 import ChangePasswordForm from './components/ChangePasswordForm';
 import LoadingState from './components/ui/LoadingState';
 import { apiRequest, setAccessToken } from './services/api';
+import {
+  getTabFromPath,
+  getPathFromTab,
+  normalizePathname,
+  VALID_CUSTOMER_TABS,
+  VALID_OWNER_TABS,
+  VALID_STAFF_TABS,
+} from './utils/routing';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('landing');
+  const [activeTab, setActiveTabState] = useState(() => getTabFromPath(window.location.pathname) || 'landing');
   const [activeRole, setActiveRole] = useState('customer'); // 'customer' | 'staff' | 'owner'
   const [currentUser, setCurrentUser] = useState(null);
   const [businesses, setBusinesses] = useState([]);
@@ -35,6 +43,35 @@ export default function App() {
   const [authRoleMode, setAuthRoleMode] = useState('customer');
   const [showSetupModal, setShowSetupModal] = useState(false);
   const [customerBrowseKey, setCustomerBrowseKey] = useState(0);
+
+  const setActiveTab = useCallback((tab, { replace = false } = {}) => {
+    setActiveTabState(tab);
+    const targetPath = getPathFromTab(tab);
+    if (normalizePathname(window.location.pathname) !== targetPath) {
+      if (replace) {
+        window.history.replaceState({ tab }, '', targetPath);
+      } else {
+        window.history.pushState({ tab }, '', targetPath);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const tabFromUrl = getTabFromPath(window.location.pathname) || 'landing';
+      setActiveTabState(tabFromUrl);
+      if (VALID_OWNER_TABS.includes(tabFromUrl) && tabFromUrl !== 'account') {
+        setActiveRole('owner');
+      } else if (tabFromUrl === 'staff-dashboard') {
+        setActiveRole('staff');
+      } else if (VALID_CUSTOMER_TABS.includes(tabFromUrl) && tabFromUrl !== 'account') {
+        setActiveRole('customer');
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
   const fetchUserBusinesses = useCallback(async () => {
     try {
@@ -73,6 +110,8 @@ export default function App() {
   // Silent session restore on initial page load
   useEffect(() => {
     async function restoreSession() {
+      const urlTab = getTabFromPath(window.location.pathname);
+
       try {
         const savedRole = sessionStorage.getItem('servicehub_active_role');
         const savedTab = sessionStorage.getItem('servicehub_active_tab');
@@ -93,56 +132,86 @@ export default function App() {
             const hasOwnerRole = userBizs.some((b) => b.currentUserRole === 'OWNER' || b.currentUserRole === 'ADMIN');
             const hasStaffRole = userBizs.some((b) => b.currentUserRole === 'STAFF');
 
-            const validCustomerTabs = ['customer-portal', 'customer-discover', 'customer-appointments', 'customer-reviews', 'account'];
-            const validOwnerTabs = ['dashboard', 'bookings', 'calendar', 'customers', 'services', 'team', 'staff', 'reviews', 'reports', 'performance', 'opportunities', 'settings', 'onboarding', 'account'];
-            const validStaffTabs = ['staff-dashboard', 'account'];
+            const isPublicEntryUrl = !urlTab || ['landing', 'login', 'register'].includes(urlTab);
 
             if (hasOwnerRole) {
-              if (savedRole === 'customer' && savedTab && validCustomerTabs.includes(savedTab)) {
+              if (urlTab && VALID_CUSTOMER_TABS.includes(urlTab) && urlTab !== 'account') {
                 setActiveRole('customer');
-                setActiveTab(savedTab);
-              } else if (savedRole === 'staff' && hasStaffRole) {
+                setActiveTab(urlTab, { replace: true });
+              } else if (urlTab === 'staff-dashboard' && hasStaffRole) {
                 setActiveRole('staff');
-                setActiveTab(savedTab && validStaffTabs.includes(savedTab) ? savedTab : 'staff-dashboard');
-              } else {
-                let resolvedOwnerTab = savedTab && validOwnerTabs.includes(savedTab) ? savedTab : 'dashboard';
-                if (userBizs.length > 0 && resolvedOwnerTab === 'onboarding') {
-                  resolvedOwnerTab = 'dashboard';
-                }
+                setActiveTab('staff-dashboard', { replace: true });
+              } else if (urlTab && VALID_OWNER_TABS.includes(urlTab)) {
+                const resolvedOwnerTab = (userBizs.length > 0 && urlTab === 'onboarding') ? 'dashboard' : urlTab;
                 setActiveRole('owner');
-                setActiveTab(resolvedOwnerTab);
+                setActiveTab(resolvedOwnerTab, { replace: true });
+              } else if (isPublicEntryUrl) {
+                if (savedRole === 'customer' && savedTab && VALID_CUSTOMER_TABS.includes(savedTab)) {
+                  setActiveRole('customer');
+                  setActiveTab(savedTab, { replace: true });
+                } else if (savedRole === 'staff' && hasStaffRole) {
+                  setActiveRole('staff');
+                  setActiveTab(savedTab && VALID_STAFF_TABS.includes(savedTab) ? savedTab : 'staff-dashboard', { replace: true });
+                } else {
+                  let resolvedOwnerTab = savedTab && VALID_OWNER_TABS.includes(savedTab) ? savedTab : 'dashboard';
+                  if (userBizs.length > 0 && resolvedOwnerTab === 'onboarding') {
+                    resolvedOwnerTab = 'dashboard';
+                  }
+                  setActiveRole('owner');
+                  setActiveTab(resolvedOwnerTab, { replace: true });
+                }
+              } else {
+                setActiveRole('owner');
+                setActiveTab('dashboard', { replace: true });
               }
             } else if (hasStaffRole) {
-              if (savedRole === 'customer' && savedTab && validCustomerTabs.includes(savedTab)) {
+              if (urlTab && VALID_CUSTOMER_TABS.includes(urlTab) && urlTab !== 'account') {
                 setActiveRole('customer');
-                setActiveTab(savedTab);
+                setActiveTab(urlTab, { replace: true });
+              } else if (urlTab && VALID_STAFF_TABS.includes(urlTab)) {
+                setActiveRole('staff');
+                setActiveTab(urlTab, { replace: true });
+              } else if (savedRole === 'customer' && savedTab && VALID_CUSTOMER_TABS.includes(savedTab)) {
+                setActiveRole('customer');
+                setActiveTab(savedTab, { replace: true });
               } else {
                 setActiveRole('staff');
-                setActiveTab(savedTab && validStaffTabs.includes(savedTab) ? savedTab : 'staff-dashboard');
+                setActiveTab(savedTab && VALID_STAFF_TABS.includes(savedTab) ? savedTab : 'staff-dashboard', { replace: true });
               }
             } else {
               // Pure Customer (No business staff/owner memberships)
               setActiveRole('customer');
-              setActiveTab(savedTab && validCustomerTabs.includes(savedTab) ? savedTab : 'customer-portal');
+              const targetCustomerTab =
+                urlTab && VALID_CUSTOMER_TABS.includes(urlTab)
+                  ? urlTab
+                  : savedTab && VALID_CUSTOMER_TABS.includes(savedTab)
+                  ? savedTab
+                  : 'customer-portal';
+              setActiveTab(targetCustomerTab, { replace: true });
             }
 
             setCurrentUser(user);
+            return;
           }
         }
+
+        // Not authenticated: keep requested URL tab (protected views render LoginForm without losing URL)
+        setActiveTabState(urlTab || 'landing');
       } catch (err) {
-        // No active session -> stay on landing page
-        setActiveTab('landing');
+        // No active session -> stay on public/requested URL without overwriting path
+        setActiveTabState(urlTab || 'landing');
       } finally {
         setInitializing(false);
       }
     }
 
     restoreSession();
-  }, [fetchUserBusinesses]);
+  }, [fetchUserBusinesses, setActiveTab]);
 
   const handleLoginSuccess = async (user, selectedRole) => {
     setLoginRoleError(null);
     const userBizs = await fetchUserBusinesses();
+    const urlTab = getTabFromPath(window.location.pathname);
 
     const hasOwnerRole = userBizs.some((b) => b.currentUserRole === 'OWNER' || b.currentUserRole === 'ADMIN');
     const hasStaffRole = userBizs.some((b) => b.currentUserRole === 'STAFF');
@@ -154,7 +223,8 @@ export default function App() {
       }
       setCurrentUser(user);
       setActiveRole('owner');
-      const targetTab = userBizs.length === 0 ? 'onboarding' : 'dashboard';
+      const requestedOwnerTab = urlTab && VALID_OWNER_TABS.includes(urlTab) ? urlTab : null;
+      const targetTab = userBizs.length === 0 ? 'onboarding' : (requestedOwnerTab && requestedOwnerTab !== 'onboarding' ? requestedOwnerTab : 'dashboard');
       setActiveTab(targetTab);
       sessionStorage.setItem('servicehub_active_role', 'owner');
       sessionStorage.setItem('servicehub_active_tab', targetTab);
@@ -165,17 +235,19 @@ export default function App() {
       }
       setCurrentUser(user);
       setActiveRole('staff');
-      setActiveTab('staff-dashboard');
+      const targetTab = urlTab && VALID_STAFF_TABS.includes(urlTab) ? urlTab : 'staff-dashboard';
+      setActiveTab(targetTab);
       sessionStorage.setItem('servicehub_active_role', 'staff');
-      sessionStorage.setItem('servicehub_active_tab', 'staff-dashboard');
+      sessionStorage.setItem('servicehub_active_tab', targetTab);
     } else {
       // Customer login
       setCurrentUser(user);
       if (!hasOwnerRole && !hasStaffRole) {
         setActiveRole('customer');
-        setActiveTab('customer-portal');
+        const targetTab = urlTab && VALID_CUSTOMER_TABS.includes(urlTab) ? urlTab : 'customer-portal';
+        setActiveTab(targetTab);
         sessionStorage.setItem('servicehub_active_role', 'customer');
-        sessionStorage.setItem('servicehub_active_tab', 'customer-portal');
+        sessionStorage.setItem('servicehub_active_tab', targetTab);
       } else if (hasStaffRole && !hasOwnerRole) {
         // Staff credentials entered under Customer tab -> Backend authority says STAFF -> route to Staff Portal
         setActiveRole('staff');
@@ -184,9 +256,11 @@ export default function App() {
         sessionStorage.setItem('servicehub_active_tab', 'staff-dashboard');
       } else if (hasOwnerRole) {
         setActiveRole('owner');
-        setActiveTab('dashboard');
+        const requestedOwnerTab = urlTab && VALID_OWNER_TABS.includes(urlTab) ? urlTab : null;
+        const targetTab = requestedOwnerTab && requestedOwnerTab !== 'onboarding' ? requestedOwnerTab : 'dashboard';
+        setActiveTab(targetTab);
         sessionStorage.setItem('servicehub_active_role', 'owner');
-        sessionStorage.setItem('servicehub_active_tab', 'dashboard');
+        sessionStorage.setItem('servicehub_active_tab', targetTab);
       }
     }
   };
@@ -477,6 +551,15 @@ export default function App() {
                     externalError={loginRoleError}
                   />
                 )
+              )}
+
+              {!currentUser && !['landing', 'login', 'register', 'customer-portal', 'customer-discover', 'customer-appointments', 'customer-reviews', 'onboarding', 'account'].includes(activeTab) && (
+                <LoginForm
+                  onLoginSuccess={handleLoginSuccess}
+                  switchToRegister={handleSwitchToRegister}
+                  initialRole={VALID_OWNER_TABS.includes(activeTab) ? 'owner' : activeTab === 'staff-dashboard' ? 'staff' : 'customer'}
+                  externalError={loginRoleError}
+                />
               )}
 
               {activeTab === 'account' && (
