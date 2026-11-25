@@ -158,7 +158,20 @@ export default function App() {
         if (!isMounted) return;
 
         if (!result?.authenticated) {
-          setActiveTabState(urlTab || 'landing');
+          const isPublicUrl = !urlTab || ['landing', 'login', 'register'].includes(urlTab);
+          if (isPublicUrl) {
+            setActiveTabState(urlTab || 'landing');
+          } else {
+            sessionStorage.setItem('servicehub_redirect_tab', urlTab);
+            setAuthRoleMode(
+              VALID_OWNER_TABS.includes(urlTab) && urlTab !== 'account'
+                ? 'owner'
+                : urlTab === 'staff-dashboard'
+                ? 'staff'
+                : 'customer'
+            );
+            setActiveTab('login', { replace: true });
+          }
           return;
         }
 
@@ -237,7 +250,13 @@ export default function App() {
       })
       .catch(() => {
         if (!isMounted) return;
-        setActiveTabState(urlTab || 'landing');
+        const isPublicUrl = !urlTab || ['landing', 'login', 'register'].includes(urlTab);
+        if (isPublicUrl) {
+          setActiveTabState(urlTab || 'landing');
+        } else {
+          sessionStorage.setItem('servicehub_redirect_tab', urlTab);
+          setActiveTab('login', { replace: true });
+        }
       })
       .finally(() => {
         if (isMounted) {
@@ -254,6 +273,9 @@ export default function App() {
     setLoginRoleError(null);
     const userBizs = await fetchUserBusinesses();
     const urlTab = getTabFromPath(window.location.pathname);
+    const savedRedirectTab = sessionStorage.getItem('servicehub_redirect_tab');
+    sessionStorage.removeItem('servicehub_redirect_tab');
+    const intendedTab = savedRedirectTab || (urlTab && !['landing', 'login', 'register'].includes(urlTab) ? urlTab : null);
 
     const hasOwnerRole = userBizs.some((b) => b.currentUserRole === 'OWNER' || b.currentUserRole === 'ADMIN');
     const hasStaffRole = userBizs.some((b) => b.currentUserRole === 'STAFF');
@@ -265,7 +287,7 @@ export default function App() {
       }
       setCurrentUser(user);
       setActiveRole('owner');
-      const requestedOwnerTab = urlTab && VALID_OWNER_TABS.includes(urlTab) ? urlTab : null;
+      const requestedOwnerTab = intendedTab && VALID_OWNER_TABS.includes(intendedTab) ? intendedTab : null;
       const targetTab = userBizs.length === 0 ? 'onboarding' : (requestedOwnerTab && requestedOwnerTab !== 'onboarding' ? requestedOwnerTab : 'dashboard');
       setActiveTab(targetTab);
       sessionStorage.setItem('servicehub_active_role', 'owner');
@@ -277,7 +299,7 @@ export default function App() {
       }
       setCurrentUser(user);
       setActiveRole('staff');
-      const targetTab = urlTab && VALID_STAFF_TABS.includes(urlTab) ? urlTab : 'staff-dashboard';
+      const targetTab = intendedTab && VALID_STAFF_TABS.includes(intendedTab) ? intendedTab : 'staff-dashboard';
       setActiveTab(targetTab);
       sessionStorage.setItem('servicehub_active_role', 'staff');
       sessionStorage.setItem('servicehub_active_tab', targetTab);
@@ -286,7 +308,7 @@ export default function App() {
       setCurrentUser(user);
       if (!hasOwnerRole && !hasStaffRole) {
         setActiveRole('customer');
-        const targetTab = urlTab && VALID_CUSTOMER_TABS.includes(urlTab) ? urlTab : 'customer-portal';
+        const targetTab = intendedTab && VALID_CUSTOMER_TABS.includes(intendedTab) ? intendedTab : 'customer-portal';
         setActiveTab(targetTab);
         sessionStorage.setItem('servicehub_active_role', 'customer');
         sessionStorage.setItem('servicehub_active_tab', targetTab);
@@ -298,7 +320,7 @@ export default function App() {
         sessionStorage.setItem('servicehub_active_tab', 'staff-dashboard');
       } else if (hasOwnerRole) {
         setActiveRole('owner');
-        const requestedOwnerTab = urlTab && VALID_OWNER_TABS.includes(urlTab) ? urlTab : null;
+        const requestedOwnerTab = intendedTab && VALID_OWNER_TABS.includes(intendedTab) ? intendedTab : null;
         const targetTab = requestedOwnerTab && requestedOwnerTab !== 'onboarding' ? requestedOwnerTab : 'dashboard';
         setActiveTab(targetTab);
         sessionStorage.setItem('servicehub_active_role', 'owner');
@@ -336,6 +358,7 @@ export default function App() {
     setShowSetupModal(false);
     sessionStorage.removeItem('servicehub_active_tab');
     sessionStorage.removeItem('servicehub_active_role');
+    sessionStorage.removeItem('servicehub_redirect_tab');
     sessionStorage.removeItem('servicehub_selected_business_id');
     sessionStorage.removeItem('servicehub_customer_subtab');
     sessionStorage.removeItem('servicehub_customer_selected_biz');
