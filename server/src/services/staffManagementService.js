@@ -108,25 +108,144 @@ const getStaffById = async (businessId, staffId) => {
  */
 const createStaffProfile = async (businessId, data) => {
   const validated = createStaffProfileSchema.parse(data);
+  let targetBusinessMemberId = validated.businessMemberId;
 
-  return await prisma.$transaction(async (tx) => {
-    let targetBusinessMemberId = validated.businessMemberId;
-    let generatedTemporaryPassword = null;
+  if (!targetBusinessMemberId && (!validated.name || !validated.email)) {
+    const error = new Error('Full Name and Email are required to add a new staff member.');
+    error.statusCode = 400;
+    throw error;
+  }
 
-    if (!targetBusinessMemberId) {
-      // New Staff Creation Flow: User -> BusinessMember -> Staff
-      if (!validated.name || !validated.email) {
-        const error = new Error('Full Name and Email are required to add a new staff member.');
+  // Validate and prepare Weekly Schedule (StaffSchedule) before opening DB transaction
+  const scheduleItems = (validated.schedules && validated.schedules.length > 0)
+    ? validated.schedules
+    : [0, 1, 2, 3, 4, 5, 6].map((d) => ({
+        dayOfWeek: d,
+        startTime: '09:00',
+        endTime: '18:00',
+        isAvailable: d >= 1 && d <= 6, // Mon-Sat working by default
+      }));
+
+  const scheduleMap = new Map();
+  const scheduleRows = [];
+  for (const sch of scheduleItems) {
+    const isAvail = sch.isAvailable !== undefined ? sch.isAvailable : (sch.isWorking !== undefined ? sch.isWorking : true);
+    const startTime = sch.startTime || '09:00';
+    const endTime = sch.endTime || '18:00';
+
+    if (isAvail && startTime >= endTime) {
+      const error = new Error(`Working hours for day ${sch.dayOfWeek} must have startTime before endTime.`);
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const row = { dayOfWeek: sch.dayOfWeek, startTime, endTime, isAvailable: isAvail };
+    scheduleMap.set(sch.dayOfWeek, row);
+    scheduleRows.push(row);
+  }
+
+  // Validate and prepare Initial Breaks (StaffBreak) before opening DB transaction
+  const normalizedInitialBreaks = [];
+  if (validated.breaks && validated.breaks.length > 0) {
+    const initialBreakKeys = new Set();
+
+    for (const br of validated.breaks) {
+      const bStart = br.startTime;
+      const bEnd = br.endTime;
+      if (bStart >= bEnd) {
+        const error = new Error('Break startTime must be strictly before endTime.');
         error.statusCode = 400;
         throw error;
       }
 
+      const targetDays = br.dayOfWeek !== undefined ? [Number(br.dayOfWeek)] : [1, 2, 3, 4, 5, 6];
+      for (const day of targetDays) {
+        const daySch = scheduleMap.get(day);
+        if (!daySch || !daySch.isAvailable) {
+          if (br.dayOfWeek !== undefined) {
+            const error = new Error(`Cannot add a break on a non-working day (Day ${day}).`);
+            error.statusCode = 400;
+            throw error;
+          }
+          continue;
+        }
+
+        if (bStart < daySch.startTime || bEnd > daySch.endTime) {
+          const error = new Error(`Break (${bStart} – ${bEnd}) must fall completely inside working hours (${daySch.startTime} – ${daySch.endTime}).`);
+          error.statusCode = 400;
+          throw error;
+        }
+
+        const bKey = `${day}_${bStart}_${bEnd}`;
+        if (!initialBreakKeys.has(bKey)) {
+          initialBreakKeys.add(bKey);
+          normalizedInitialBreaks.push({
+            dayOfWeek: day,
+            startTime: bStart,
+            endTime: bEnd,
+            label: br.label || br.title || 'Break',
+          });
+        }
+      }
+    }
+
+    // Overlap check among initial breaks
+    const breaksByDayMap = {};
+    for (const b of normalizedInitialBreaks) {
+      if (!breaksByDayMap[b.dayOfWeek]) breaksByDayMap[b.dayOfWeek] = [];
+      for (const existing of breaksByDayMap[b.dayOfWeek]) {
+        if (b.startTime < existing.endTime && b.endTime > existing.startTime) {
+          const error = new Error(`Break (${b.startTime} - ${b.endTime}) overlaps with another break (${existing.startTime} - ${existing.endTime}).`);
+          error.statusCode = 400;
+          throw error;
+        }
+      }
+      breaksByDayMap[b.dayOfWeek].push(b);
+    }
+  }
+
+  // Validate and prepare Initial Time Off (StaffTimeOff) before opening DB transaction
+  const timeOffRows = [];
+  if (validated.timeOffs && validated.timeOffs.length > 0) {
+    for (const to of validated.timeOffs) {
+      const startStr = to.startDateTime || to.startDate;
+      const endStr = to.endDateTime || to.endDate;
+      if (!startStr || !endStr) continue;
+
+      const start = new Date(startStr);
+      const end = new Date(endStr);
+
+      if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+        const error = new Error('Invalid date format for time off.');
+        error.statusCode = 400;
+        throw error;
+      }
+
+      if (start >= end) {
+        const error = new Error('Time off start date/time must be strictly before end date/time.');
+        error.statusCode = 400;
+        throw error;
+      }
+
+      timeOffRows.push({
+        startDateTime: start,
+        endDateTime: end,
+        reason: to.reason || null,
+      });
+    }
+  }
+
+  // Perform CPU-bound bcrypt hashing BEFORE opening the database transaction
+  const generatedTemporaryPassword = `Temp#${crypto.randomBytes(4).toString('hex')}`;
+  const tempPasswordHash = await bcrypt.hash(generatedTemporaryPassword, 12);
+
+  return await prisma.$transaction(async (tx) => {
+    let resolvedUserName = null;
+
+    if (!targetBusinessMemberId) {
+      // New Staff Creation Flow: User -> BusinessMember -> Staff
       const normalizedEmail = validated.email.trim().toLowerCase();
       const fullName = validated.name.trim();
-
-      // Generate secure temporary password
-      generatedTemporaryPassword = `Temp#${crypto.randomBytes(4).toString('hex')}`;
-      const tempPasswordHash = await bcrypt.hash(generatedTemporaryPassword, 12);
 
       // Check whether a User with that email already exists
       let user = await tx.user.findUnique({
@@ -154,6 +273,7 @@ const createStaffProfile = async (businessId, data) => {
           },
         });
       }
+      resolvedUserName = user.name;
 
       // Check whether user is already a BusinessMember of current business
       const existingMember = await tx.businessMember.findUnique({
@@ -212,9 +332,8 @@ const createStaffProfile = async (businessId, data) => {
         throw error;
       }
 
-      // Set temporary password for existing member user account
-      generatedTemporaryPassword = `Temp#${crypto.randomBytes(4).toString('hex')}`;
-      const tempPasswordHash = await bcrypt.hash(generatedTemporaryPassword, 12);
+      resolvedUserName = member.user?.name || null;
+
       await tx.user.update({
         where: { id: member.userId },
         data: {
@@ -224,13 +343,7 @@ const createStaffProfile = async (businessId, data) => {
       });
     }
 
-    // Resolve display name
-    const memberObj = await tx.businessMember.findUnique({
-      where: { id: targetBusinessMemberId },
-      include: { user: true },
-    });
-
-    const displayName = validated.displayName?.trim() || validated.name?.trim() || memberObj?.user?.name || 'Staff Member';
+    const displayName = validated.displayName?.trim() || validated.name?.trim() || resolvedUserName || 'Staff Member';
 
     // 1. Create Staff Profile
     const staff = await tx.staff.create({
@@ -266,139 +379,42 @@ const createStaffProfile = async (businessId, data) => {
       });
     }
 
-    // 3. Weekly Schedule (StaffSchedule)
-    const scheduleItems = (validated.schedules && validated.schedules.length > 0)
-      ? validated.schedules
-      : [0, 1, 2, 3, 4, 5, 6].map((d) => ({
-          dayOfWeek: d,
-          startTime: '09:00',
-          endTime: '18:00',
-          isAvailable: d >= 1 && d <= 6, // Mon-Sat working by default
-        }));
-
-    const scheduleMap = new Map();
-    for (const sch of scheduleItems) {
-      const isAvail = sch.isAvailable !== undefined ? sch.isAvailable : (sch.isWorking !== undefined ? sch.isWorking : true);
-      const startTime = sch.startTime || '09:00';
-      const endTime = sch.endTime || '18:00';
-
-      if (isAvail && startTime >= endTime) {
-        const error = new Error(`Working hours for day ${sch.dayOfWeek} must have startTime before endTime.`);
-        error.statusCode = 400;
-        throw error;
-      }
-
-      scheduleMap.set(sch.dayOfWeek, { dayOfWeek: sch.dayOfWeek, startTime, endTime, isAvailable: isAvail });
-
-      await tx.staffSchedule.create({
-        data: {
+    // 3. Weekly Schedule (StaffSchedule) - single batched insert
+    if (scheduleRows.length > 0) {
+      await tx.staffSchedule.createMany({
+        data: scheduleRows.map((sch) => ({
           staffId: staff.id,
           dayOfWeek: sch.dayOfWeek,
-          startTime,
-          endTime,
-          isAvailable: isAvail,
-        },
+          startTime: sch.startTime,
+          endTime: sch.endTime,
+          isAvailable: sch.isAvailable,
+        })),
       });
     }
 
     // 4. Initial Breaks (StaffBreak)
-    if (validated.breaks && validated.breaks.length > 0) {
-      const normalizedInitialBreaks = [];
-      const initialBreakKeys = new Set();
-
-      for (const br of validated.breaks) {
-        const bStart = br.startTime;
-        const bEnd = br.endTime;
-        if (bStart >= bEnd) {
-          const error = new Error('Break startTime must be strictly before endTime.');
-          error.statusCode = 400;
-          throw error;
-        }
-
-        const targetDays = br.dayOfWeek !== undefined ? [Number(br.dayOfWeek)] : [1, 2, 3, 4, 5, 6];
-        for (const day of targetDays) {
-          const daySch = scheduleMap.get(day);
-          if (!daySch || !daySch.isAvailable) {
-            if (br.dayOfWeek !== undefined) {
-              const error = new Error(`Cannot add a break on a non-working day (Day ${day}).`);
-              error.statusCode = 400;
-              throw error;
-            }
-            continue;
-          }
-
-          if (bStart < daySch.startTime || bEnd > daySch.endTime) {
-            const error = new Error(`Break (${bStart} – ${bEnd}) must fall completely inside working hours (${daySch.startTime} – ${daySch.endTime}).`);
-            error.statusCode = 400;
-            throw error;
-          }
-
-          const bKey = `${day}_${bStart}_${bEnd}`;
-          if (!initialBreakKeys.has(bKey)) {
-            initialBreakKeys.add(bKey);
-            normalizedInitialBreaks.push({
-              staffId: staff.id,
-              dayOfWeek: day,
-              startTime: bStart,
-              endTime: bEnd,
-              label: br.label || br.title || 'Break',
-            });
-          }
-        }
-      }
-
-      // Overlap check among initial breaks
-      const breaksByDayMap = {};
-      for (const b of normalizedInitialBreaks) {
-        if (!breaksByDayMap[b.dayOfWeek]) breaksByDayMap[b.dayOfWeek] = [];
-        for (const existing of breaksByDayMap[b.dayOfWeek]) {
-          if (b.startTime < existing.endTime && b.endTime > existing.startTime) {
-            const error = new Error(`Break (${b.startTime} - ${b.endTime}) overlaps with another break (${existing.startTime} - ${existing.endTime}).`);
-            error.statusCode = 400;
-            throw error;
-          }
-        }
-        breaksByDayMap[b.dayOfWeek].push(b);
-      }
-
-      if (normalizedInitialBreaks.length > 0) {
-        await tx.staffBreak.createMany({
-          data: normalizedInitialBreaks,
-        });
-      }
+    if (normalizedInitialBreaks.length > 0) {
+      await tx.staffBreak.createMany({
+        data: normalizedInitialBreaks.map((br) => ({
+          staffId: staff.id,
+          dayOfWeek: br.dayOfWeek,
+          startTime: br.startTime,
+          endTime: br.endTime,
+          label: br.label,
+        })),
+      });
     }
 
     // 5. Initial Time Off (StaffTimeOff)
-    if (validated.timeOffs && validated.timeOffs.length > 0) {
-      for (const to of validated.timeOffs) {
-        const startStr = to.startDateTime || to.startDate;
-        const endStr = to.endDateTime || to.endDate;
-        if (!startStr || !endStr) continue;
-
-        const start = new Date(startStr);
-        const end = new Date(endStr);
-
-        if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-          const error = new Error('Invalid date format for time off.');
-          error.statusCode = 400;
-          throw error;
-        }
-
-        if (start >= end) {
-          const error = new Error('Time off start date/time must be strictly before end date/time.');
-          error.statusCode = 400;
-          throw error;
-        }
-
-        await tx.staffTimeOff.create({
-          data: {
-            staffId: staff.id,
-            startDateTime: start,
-            endDateTime: end,
-            reason: to.reason || null,
-          },
-        });
-      }
+    if (timeOffRows.length > 0) {
+      await tx.staffTimeOff.createMany({
+        data: timeOffRows.map((to) => ({
+          staffId: staff.id,
+          startDateTime: to.startDateTime,
+          endDateTime: to.endDateTime,
+          reason: to.reason,
+        })),
+      });
     }
 
     // Return complete staff record with relations
@@ -431,6 +447,9 @@ const createStaffProfile = async (businessId, data) => {
     }
 
     return createdStaff;
+  }, {
+    maxWait: 10000,
+    timeout: 15000,
   });
 };
 
