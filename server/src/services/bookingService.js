@@ -28,10 +28,24 @@ const isValidStatusTransition = (fromStatus, toStatus) => {
  * Helper to validate entity existence and business scoping
  */
 const validateEntities = async (businessId, customerId, serviceId, staffId) => {
+  const [customer, service, staff, assignment] = await Promise.all([
+    prisma.customer.findUnique({ where: { id: customerId } }),
+    prisma.service.findUnique({ where: { id: serviceId } }),
+    prisma.staff.findUnique({
+      where: { id: staffId },
+      include: { businessMember: true },
+    }),
+    prisma.staffService.findUnique({
+      where: {
+        staffId_serviceId: {
+          staffId,
+          serviceId,
+        },
+      },
+    }),
+  ]);
+
   // 1. Customer
-  const customer = await prisma.customer.findUnique({
-    where: { id: customerId },
-  });
   if (!customer || customer.businessId !== businessId) {
     const error = new Error('Customer not found in this business.');
     error.statusCode = 400;
@@ -39,9 +53,6 @@ const validateEntities = async (businessId, customerId, serviceId, staffId) => {
   }
 
   // 2. Service
-  const service = await prisma.service.findUnique({
-    where: { id: serviceId },
-  });
   if (!service || service.businessId !== businessId) {
     const error = new Error('Service not found in this business.');
     error.statusCode = 400;
@@ -54,10 +65,6 @@ const validateEntities = async (businessId, customerId, serviceId, staffId) => {
   }
 
   // 3. Staff
-  const staff = await prisma.staff.findUnique({
-    where: { id: staffId },
-    include: { businessMember: true },
-  });
   if (!staff || staff.businessMember.businessId !== businessId) {
     const error = new Error('Staff profile not found in this business.');
     error.statusCode = 400;
@@ -70,14 +77,6 @@ const validateEntities = async (businessId, customerId, serviceId, staffId) => {
   }
 
   // 4. Staff-Service Assignment
-  const assignment = await prisma.staffService.findUnique({
-    where: {
-      staffId_serviceId: {
-        staffId,
-        serviceId,
-      },
-    },
-  });
   if (!assignment) {
     const error = new Error(`Staff member '${staff.displayName}' is not assigned to service '${service.name}'.`);
     error.statusCode = 400;
@@ -179,14 +178,29 @@ const validateStaffSchedule = async (staffId, startTimeDate, endTimeDate, tzOffs
   // Day of week: 0 = Sunday, 1 = Monday, ..., 6 = Saturday
   const dayOfWeek = shiftedStart.getUTCDay();
 
-  const schedule = await prisma.staffSchedule.findUnique({
-    where: {
-      staffId_dayOfWeek: {
+  const [schedule, timeOffConflict, breaks] = await Promise.all([
+    prisma.staffSchedule.findUnique({
+      where: {
+        staffId_dayOfWeek: {
+          staffId,
+          dayOfWeek,
+        },
+      },
+    }),
+    prisma.staffTimeOff.findFirst({
+      where: {
+        staffId,
+        startDateTime: { lt: endTimeDate },
+        endDateTime: { gt: startTimeDate },
+      },
+    }),
+    prisma.staffBreak.findMany({
+      where: {
         staffId,
         dayOfWeek,
       },
-    },
-  });
+    }),
+  ]);
 
   if (!schedule || !schedule.isAvailable) {
     const error = new Error('Staff member is not available on this day.');
@@ -208,14 +222,6 @@ const validateStaffSchedule = async (staffId, startTimeDate, endTimeDate, tzOffs
   }
 
   // Check Staff Time Off
-  const timeOffConflict = await prisma.staffTimeOff.findFirst({
-    where: {
-      staffId,
-      startDateTime: { lt: endTimeDate },
-      endDateTime: { gt: startTimeDate },
-    },
-  });
-
   if (timeOffConflict) {
     const error = new Error('Booking overlaps with staff time-off period.');
     error.statusCode = 400;
@@ -223,13 +229,6 @@ const validateStaffSchedule = async (staffId, startTimeDate, endTimeDate, tzOffs
   }
 
   // Check Staff Breaks (recurring weekly breaks)
-  const breaks = await prisma.staffBreak.findMany({
-    where: {
-      staffId,
-      dayOfWeek,
-    },
-  });
-
   for (const b of breaks) {
     const [bStartH, bStartM] = b.startTime.split(':').map(Number);
     const [bEndH, bEndM] = b.endTime.split(':').map(Number);
@@ -324,68 +323,74 @@ const createBooking = async (businessId, userId, data) => {
   // 4. Validate Staff Schedule Working Hours & Time Off
   await validateStaffSchedule(validated.staffId, startTimeDate, endTimeDate, tzOffsetMinutes);
 
-  // 5. Concurrency Safety: Atomic transaction with PostgreSQL Advisory Lock on Staff ID
-  return await prisma.$transaction(async (tx) => {
-    // Acquire PostgreSQL transaction-level advisory lock hashed from staffId string
-    await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(hashtext($1))`, validated.staffId);
+  // 5. Concurrency Safety: Keep only atomic lock, conflict check, and creation inside transaction
+  const createdBooking = await prisma.$transaction(
+    async (tx) => {
+      // Acquire PostgreSQL transaction-level advisory lock hashed from staffId string
+      await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(hashtext($1))`, validated.staffId);
 
-    // Double-Booking Overlap Check across ALL non-cancelled bookings
-    const conflict = await tx.booking.findFirst({
-      where: {
-        staffId: validated.staffId,
-        status: { not: 'CANCELLED' },
-        startTime: { lt: endTimeDate },
-        endTime: { gt: startTimeDate },
-      },
-    });
+      // Double-Booking Overlap Check across ALL non-cancelled bookings
+      const conflict = await tx.booking.findFirst({
+        where: {
+          staffId: validated.staffId,
+          status: { not: 'CANCELLED' },
+          startTime: { lt: endTimeDate },
+          endTime: { gt: startTimeDate },
+        },
+        select: { id: true },
+      });
 
-    if (conflict) {
-      const error = new Error('Staff member is already booked during the selected time slot.');
-      error.statusCode = 409;
-      throw error;
-    }
+      if (conflict) {
+        const error = new Error('Staff member is already booked during the selected time slot.');
+        error.statusCode = 409;
+        throw error;
+      }
 
-    // Create Booking
-    const booking = await tx.booking.create({
-      data: {
-        businessId,
-        customerId: finalCustomerId,
-        serviceId: validated.serviceId,
-        staffId: validated.staffId,
-        startTime: startTimeDate,
-        endTime: endTimeDate,
-        status: 'PENDING',
-        totalAmount,
-        notes: validated.notes || null,
-      },
-    });
-
-    // Create Initial Status History Row
-    await tx.bookingStatusHistory.create({
-      data: {
-        bookingId: booking.id,
-        fromStatus: null,
-        toStatus: 'PENDING',
-        changedByUserId: userId,
-        reason: 'Initial booking creation',
-      },
-    });
-
-    return await tx.booking.findUnique({
-      where: { id: booking.id },
-      include: {
-        customer: true,
-        service: true,
-        staff: true,
-        statusHistory: {
-          include: {
-            changedByUser: {
-              select: { id: true, name: true, email: true },
+      // Create Booking and initial Status History atomically in a single nested write
+      return await tx.booking.create({
+        data: {
+          businessId,
+          customerId: finalCustomerId,
+          serviceId: validated.serviceId,
+          staffId: validated.staffId,
+          startTime: startTimeDate,
+          endTime: endTimeDate,
+          status: 'PENDING',
+          totalAmount,
+          notes: validated.notes || null,
+          statusHistory: {
+            create: {
+              fromStatus: null,
+              toStatus: 'PENDING',
+              changedByUserId: userId,
+              reason: 'Initial booking creation',
             },
           },
         },
+        select: { id: true },
+      });
+    },
+    {
+      maxWait: 10000,
+      timeout: 15000,
+    }
+  );
+
+  // Hydrate full booking response outside the transaction so the advisory lock and tx close immediately
+  return await prisma.booking.findUnique({
+    where: { id: createdBooking.id },
+    include: {
+      customer: true,
+      service: true,
+      staff: true,
+      statusHistory: {
+        include: {
+          changedByUser: {
+            select: { id: true, name: true, email: true },
+          },
+        },
       },
-    });
+    },
   });
 };
 
@@ -663,41 +668,51 @@ const updateBooking = async (businessId, userId, userRole, bookingId, data) => {
   await validateStaffSchedule(staffId, startTimeDate, endTimeDate, tzOffsetMinutes);
 
   // Execute Transaction with PostgreSQL Advisory Locking
-  return await prisma.$transaction(async (tx) => {
-    await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(hashtext($1))`, staffId);
+  const updatedBooking = await prisma.$transaction(
+    async (tx) => {
+      await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(hashtext($1))`, staffId);
 
-    const conflict = await tx.booking.findFirst({
-      where: {
-        staffId,
-        id: { not: bookingId },
-        status: { not: 'CANCELLED' },
-        startTime: { lt: endTimeDate },
-        endTime: { gt: startTimeDate },
-      },
-    });
+      const conflict = await tx.booking.findFirst({
+        where: {
+          staffId,
+          id: { not: bookingId },
+          status: { not: 'CANCELLED' },
+          startTime: { lt: endTimeDate },
+          endTime: { gt: startTimeDate },
+        },
+        select: { id: true },
+      });
 
-    if (conflict) {
-      const error = new Error('Staff member is already booked during the selected time slot.');
-      error.statusCode = 409;
-      throw error;
+      if (conflict) {
+        const error = new Error('Staff member is already booked during the selected time slot.');
+        error.statusCode = 409;
+        throw error;
+      }
+
+      return await tx.booking.update({
+        where: { id: bookingId },
+        data: {
+          staffId,
+          startTime: startTimeDate,
+          endTime: endTimeDate,
+          notes: validated.notes !== undefined ? validated.notes : existing.notes,
+        },
+        select: { id: true },
+      });
+    },
+    {
+      maxWait: 10000,
+      timeout: 15000,
     }
+  );
 
-    const updated = await tx.booking.update({
-      where: { id: bookingId },
-      data: {
-        staffId,
-        startTime: startTimeDate,
-        endTime: endTimeDate,
-        notes: validated.notes !== undefined ? validated.notes : existing.notes,
-      },
-      include: {
-        customer: true,
-        service: true,
-        staff: true,
-      },
-    });
-
-    return updated;
+  return await prisma.booking.findUnique({
+    where: { id: updatedBooking.id },
+    include: {
+      customer: true,
+      service: true,
+      staff: true,
+    },
   });
 };
 
@@ -713,24 +728,28 @@ const cancelBooking = async (businessId, userId, userRole, bookingId, reason) =>
     throw error;
   }
 
-  return await prisma.$transaction(async (tx) => {
-    const updated = await tx.booking.update({
-      where: { id: bookingId },
-      data: { status: 'CANCELLED' },
-    });
-
-    await tx.bookingStatusHistory.create({
-      data: {
-        bookingId,
-        fromStatus: existing.status,
-        toStatus: 'CANCELLED',
-        changedByUserId: userId,
-        reason: reason || 'Booking cancelled by user',
-      },
-    });
-
-    return updated;
-  });
+  return await prisma.$transaction(
+    async (tx) => {
+      return await tx.booking.update({
+        where: { id: bookingId },
+        data: {
+          status: 'CANCELLED',
+          statusHistory: {
+            create: {
+              fromStatus: existing.status,
+              toStatus: 'CANCELLED',
+              changedByUserId: userId,
+              reason: reason || 'Booking cancelled by user',
+            },
+          },
+        },
+      });
+    },
+    {
+      maxWait: 10000,
+      timeout: 15000,
+    }
+  );
 };
 
 /**
@@ -745,24 +764,28 @@ const changeBookingStatus = async (businessId, userId, userRole, bookingId, newS
     throw error;
   }
 
-  return await prisma.$transaction(async (tx) => {
-    const updated = await tx.booking.update({
-      where: { id: bookingId },
-      data: { status: newStatus },
-    });
-
-    await tx.bookingStatusHistory.create({
-      data: {
-        bookingId,
-        fromStatus: existing.status,
-        toStatus: newStatus,
-        changedByUserId: userId,
-        reason: reason || `Status changed to ${newStatus}`,
-      },
-    });
-
-    return updated;
-  });
+  return await prisma.$transaction(
+    async (tx) => {
+      return await tx.booking.update({
+        where: { id: bookingId },
+        data: {
+          status: newStatus,
+          statusHistory: {
+            create: {
+              fromStatus: existing.status,
+              toStatus: newStatus,
+              changedByUserId: userId,
+              reason: reason || `Status changed to ${newStatus}`,
+            },
+          },
+        },
+      });
+    },
+    {
+      maxWait: 10000,
+      timeout: 15000,
+    }
+  );
 };
 
 /**
